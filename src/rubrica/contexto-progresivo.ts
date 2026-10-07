@@ -6,8 +6,13 @@ import { buscarResumen, type Resumen } from "./lectura-barata.ts";
 import { criterioJson, cumple, evidenciaArchivo, evidenciaAusencia, evidenciaMedicion, noAplica, noCumple, parcial, porMetrica } from "./comun.ts";
 
 const EJE = "contexto-progresivo";
-const NOMBRE_LISTA = /^(listar|list)$/i;
-const NOMBRE_DETALLE = /detalle|^obtener$|^get-|^leer-|^show$/i;
+// «buscar/search/find» son tan nombre-de-lista como «listar/list»: un verbo que filtra y
+// devuelve varias cosas, sea cual sea el verbo con el que el dominio lo llame. Sin ellos, un
+// repo en español cuyo verbo de lista se llama `buscar` salía con tres-tamanos y filtros en
+// no-cumple o no-aplica aunque el verbo existiera (hallazgo en un repo real en español).
+const NOMBRE_LISTA = /^(listar|list|buscar|search|find)$/i;
+// Lo mismo para detalle: `leer` (sin guion) es tan detalle como `leer-` o `get-`.
+const NOMBRE_DETALLE = /detalle|^obtener$|^get-|^get$|^leer$|^leer-|^ver$|^mostrar$|^show$|^read$/i;
 const BANDERAS_NO_FILTRO = new Set(["--json", "--help", "--version", "--dry-run", "--aplicar", "--apply", "--correr", "--simular", "--ensayo", "--confirm", "--formato", "--format"]);
 const BANDERAS_DE_LIMITE = /^--(limite|limit|max|page|pagina|offset|top)\b/i;
 

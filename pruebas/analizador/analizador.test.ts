@@ -45,6 +45,22 @@ test("guías: README, AGENTS y CLAUDE, cuál se carga sola y qué importa cada u
   assert.equal(porTipo["agents"]!.caracteres, porTipo["agents"]!.contenido.length);
 });
 
+// Hallazgo al auditar axd contra sí mismo: contaba
+// pruebas/repos/node-cli/AGENTS.md —un repo de mentira para las pruebas del propio analizador—
+// como si documentara a axd. Un AGENTS.md bajo pruebas/ (o tests/, spec/...) no es una guía de
+// este repo; uno fuera de ahí sigue contando igual.
+test("un AGENTS.md o CLAUDE.md bajo pruebas/ no es una guía de este repo; uno fuera de ahí sí", () => {
+  const inv = analizar(
+    lectorEnMemoria({
+      "AGENTS.md": "# Guía real",
+      "pruebas/repos/node-cli/AGENTS.md": "# Guía de un repo de mentira para las pruebas",
+      "pruebas/repos/node-cli/CLAUDE.md": "# También de mentira",
+      "tests/fixtures/otro/AGENTS.md": "# De mentira, con la otra carpeta de pruebas",
+    }),
+  );
+  assert.deepEqual(inv.guias.map((g) => g.ruta), ["AGENTS.md"]);
+});
+
 test("manifiesto de Node: scripts con su línea, dependencias y el bin resuelto a su fuente .ts", () => {
   const [paquete] = nodeCli.manifiestos;
   assert.equal(paquete!.nombre, "@demo/tareas");

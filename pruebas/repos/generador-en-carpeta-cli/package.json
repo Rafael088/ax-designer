@@ -1,0 +1,8 @@
+{
+  "name": "generador-en-carpeta-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "herramienta": "src/cli/main.ts"
+  }
+}

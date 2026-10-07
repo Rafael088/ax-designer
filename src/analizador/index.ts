@@ -85,7 +85,11 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
 
   // Primero guías y manifiestos: los manifiestos dicen qué archivos son puntos de entrada.
   for (const archivo of recorrido.archivos) {
-    if (tipoDeGuia(archivo)) {
+    // Un AGENTS.md o CLAUDE.md bajo pruebas/ (o tests/, __tests__/, spec/...) es de un repo de
+    // mentira para las pruebas del propio analizador, no una guía de este repo: sin la
+    // exclusión, auditar axd contra sí mismo contaba pruebas/repos/node-cli/AGENTS.md como si
+    // documentara a axd (hallazgo sobre verbos-estrechos/transiciones-con-dueno).
+    if (tipoDeGuia(archivo) && !esPrueba(archivo.ruta)) {
       inventario.guias.push(leerGuia(archivo, lector.leer(archivo.ruta), existentes, maxContenido));
     }
     if (!tipoDeManifiesto(archivo.nombre)) continue;

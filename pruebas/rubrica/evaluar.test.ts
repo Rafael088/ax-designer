@@ -27,6 +27,8 @@ function cargar(nombre: string): { inventario: Inventario; medicion: Medicion } 
 const nodeCli = cargar("node-cli");
 const pythonCli = cargar("python-cli");
 const muyMalo = cargar("muy-malo");
+const cliVerbosEs = cargar("cli-verbos-es");
+const generadorEnCarpetaCli = cargar("generador-en-carpeta-cli");
 
 function porId(criterios: CriterioDecidido[]): Record<string, CriterioDecidido> {
   return Object.fromEntries(criterios.map((c) => [c.id, c]));
@@ -39,6 +41,25 @@ test("lectura-barata: node-cli tiene un verbo de resumen cumpliendo, documentado
   assert.equal(c["lectura-barata/resumen-existe"]!.resultado, "cumple");
   assert.equal(c["lectura-barata/formato-de-maquina"]!.resultado, "cumple");
   assert.equal(c["lectura-barata/costo-del-resumen"]!.resultado, "sin-evidencia", "es un verbo: medir su salida exige correrlo");
+});
+
+// Hallazgo al auditar axd contra sí mismo: `axd auditar .` sobre el propio repo tomaba
+// `case "resumen":`/`case "listar":`/`case "leer":` de src/generadores/cli/index.ts (qué tipo
+// de Implementacion generaría para el repo objetivo) como si fueran verbos propios de axd, y
+// lectura-barata/resumen-existe salía «parcial» (solo se descubre leyendo el código) en vez de
+// cumple, con formato-de-maquina y esquema-versionado en no-cumple porque ese `case` no tiene
+// JSON cerca. generador-en-carpeta-cli reproduce el patrón (nunca este repo).
+test("lectura-barata: el switch de un generador que vive en una carpeta cli/ no pasa por resumen de verdad", () => {
+  const c = porId(evaluarLecturaBarata(generadorEnCarpetaCli.inventario, generadorEnCarpetaCli.medicion));
+  assert.equal(c["lectura-barata/resumen-existe"]!.resultado, "cumple", "el resumen de verdad es el «estado» de src/cli/main.ts, documentado en AGENTS.md");
+  assert.equal(c["lectura-barata/formato-de-maquina"]!.resultado, "cumple");
+});
+
+test("verbos-estrechos: el switch del generador no infla la superficie ni se cuenta como verbo propio", () => {
+  const nombres = generadorEnCarpetaCli.inventario.superficies.cli.map((v) => v.nombre);
+  assert.deepEqual(nombres, ["estado", "generar"], "resumen/listar/leer del generador no deberían aparecer en superficies.cli");
+  const c = porId(evaluarVerbosEstrechos(generadorEnCarpetaCli.inventario));
+  assert.equal(c["verbos-estrechos/operaciones-con-nombre"]!.resultado, "cumple");
 });
 
 test("lectura-barata: muy-malo no tiene ningún camino de resumen, con su ausencia repetible", () => {
@@ -120,6 +141,17 @@ test("contexto-progresivo: muy-malo no tiene guía de entrada ni entidades con i
 test("contexto-progresivo: node-cli tiene una guía de entrada barata", () => {
   const c = porId(evaluarContextoProgresivo(nodeCli.inventario, nodeCli.medicion));
   assert.equal(c["contexto-progresivo/guia-de-entrada-acotada"]!.resultado, "cumple");
+});
+
+// Regresión: auditar un repo real en español con `axd auditar` daba tres-tamanos en no-cumple y
+// filtros en no-aplica con el verbo de lista llamado `buscar` y el de detalle `leer` — ninguno
+// de los dos coincidía con el nombre-de-lista/detalle que buscaba la heurística. cli-verbos-es
+// reproduce el patrón.
+test("contexto-progresivo: buscar/leer cuentan como lista y detalle, no solo listar/list y detalle/obtener/get-/leer-/show", () => {
+  const c = porId(evaluarContextoProgresivo(cliVerbosEs.inventario, cliVerbosEs.medicion));
+  assert.equal(c["contexto-progresivo/tres-tamanos"]!.resultado, "cumple", "resumen (estado) + lista (buscar) + detalle (leer) son los tres tamaños");
+  assert.equal(c["contexto-progresivo/filtros"]!.resultado, "cumple", "buscar tiene --proyecto y --estado, dos filtros");
+  assert.notEqual(c["contexto-progresivo/lectura-acotada"]!.resultado, "no-aplica", "buscar existe como lista, así que el criterio aplica");
 });
 
 // --- 6. Errores que dicen qué hacer ---

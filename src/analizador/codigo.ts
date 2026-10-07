@@ -51,10 +51,17 @@ export function leerCodigo(ruta: Ruta, lenguaje: Lenguaje, texto: string, existe
   if (prueba) return { modulo, verbos: [], api: [], tools: [], banderas: [], senales: [], principal };
 
   const libreria = (patron: RegExp) => modulo.imports.some((i) => patron.test(i));
+  // Una ruta con /cli/ o /bin/ no es entrada de verdad si vive bajo un generador o una
+  // plantilla: ese switch/case describe qué genera, no qué expone el propio repo (hallazgo de
+  // auditar axd contra sí mismo: `src/generadores/cli/index.ts` tiene `case "resumen":`,
+  // `case "listar":`… que
+  // enumeran tipos de Implementacion, y sin esta exclusión el analizador los contaba como
+  // verbos propios de axd). Un shebang o `esEntrada` de verdad siguen contando igual.
+  const esGeneradorOPlantilla = /(^|\/)(generadores?|generators?|plantillas?|templates?)(\/|\.)/.test(ruta);
   const verbos = verbosCli(ruta, lineas, lenguaje, {
     typer: libreria(/^typer\b/),
     yargs: libreria(/^yargs\b/),
-    switch: esEntrada || principal !== undefined || /(^|\/)(cli|bin|comandos|commands)(\/|\.)/.test(ruta),
+    switch: esEntrada || principal !== undefined || (!esGeneradorOPlantilla && /(^|\/)(cli|bin|comandos|commands)(\/|\.)/.test(ruta)),
   });
   const api = rutasApi(ruta, lineas, lenguaje);
   const tools = toolsMcp(ruta, lineas, lenguaje);
@@ -161,6 +168,14 @@ function verbosCli(
   lineas.forEach((linea, i) => {
     if (lenguaje === "python") {
       for (const m of linea.matchAll(/\badd_parser\(\s*["']([\w:-]+)["']/g)) agregar(m[1]!, i + 1, "argparse");
+      // `add_parser(` que termina la línea y el nombre entre comillas queda en la siguiente:
+      // el formateador de Python (black) envuelve así la llamada en cuanto lleva `help=`, y la
+      // regla de una sola línea la dejaba sin ver (hallazgo en un repo Python real: `buscar` y
+      // `leer` de su argparse no salían en superficies.cli).
+      if (/\badd_parser\(\s*$/.test(linea)) {
+        const m = /^\s*["']([\w:-]+)["']/.exec(lineas[i + 1] ?? "");
+        if (m) agregar(m[1]!, i + 1, "argparse");
+      }
       const decorador = /^\s*@([\w.]+)\.command\(\s*(?:(?:name\s*=\s*)?["']([\w:-]+)["'])?/.exec(linea);
       if (decorador) {
         const via: ViaDeVerbo = contexto.typer ? "typer" : "click";

@@ -43,7 +43,42 @@ test("el switch solo da verbos en puntos de entrada o carpetas de CLI, para no c
   assert.deepEqual(leerCodigo("src/cli/main.ts", "typescript", codigo, new Set(), false).verbos.map((v) => v.nombre), ["rojo"]);
 });
 
+// Hallazgo al auditar axd contra sí mismo: `axd auditar .` contaba `case "resumen":`,
+// `case "listar":`, `case "leer":`… de `src/generadores/cli/index.ts` como si fueran verbos
+// propios de axd — ese switch enumera tipos de `Implementacion` (qué generaría axd para el repo
+// objetivo), no comandos de axd. Una ruta con /cli/ o /bin/ bajo generadores/ o plantillas/ no
+// activa el switch solo por la ruta; esEntrada o un shebang de verdad sí siguen contando.
+test("una carpeta de generador o plantilla no activa el switch solo por tener /cli/ o /bin/ en la ruta", () => {
+  const codigo = 'function queHace(impl) {\n  switch (impl.tipo) {\n    case "resumen":\n      return "...";\n    case "listar":\n      return "...";\n  }\n}';
+  assert.deepEqual(leerCodigo("src/generadores/cli/index.ts", "typescript", codigo, new Set(), false).verbos, []);
+  assert.deepEqual(leerCodigo("src/generadores/cli/plantillas/node.ts", "typescript", codigo, new Set(), false).verbos, []);
+  assert.deepEqual(leerCodigo("plantillas/bin/texto.ts", "typescript", codigo, new Set(), false).verbos, []);
+  // Pero si de verdad es un punto de entrada (esEntrada o shebang), sigue contando igual.
+  assert.deepEqual(leerCodigo("src/generadores/cli/index.ts", "typescript", codigo, new Set(), true).verbos.map((v) => v.nombre), ["resumen", "listar"]);
+});
+
 test("un import de interfaz o de servidor web es señal; uno de la biblioteca estándar no", () => {
   const { senales } = leerCodigo("app.py", "python", "import json\nfrom gi.repository import Gtk\nimport tkinter\n", new Set(), false);
   assert.deepEqual(senales.filter((s) => s.tipo === "importa-interfaz").map((s) => s.linea), [2, 3]);
+});
+
+// Hallazgo al auditar axd contra sí mismo: `add_parser(` con `help=` largo queda
+// envuelto a dos líneas (así lo deja black) y el nombre entre comillas cae en la siguiente. La
+// regla de una sola línea dejaba esos verbos (`buscar`, `leer` en tareas/conocimiento.py) fuera
+// de superficies.cli, con lo que contexto-progresivo no veía ni la lista ni el detalle.
+test("add_parser en una sola línea y envuelto a dos (el nombre en la siguiente) dan el mismo verbo", () => {
+  const unaLinea = 'sub.add_parser("buscar", help="Una línea por entrada")';
+  assert.deepEqual(leerCodigo("cli.py", "python", unaLinea, new Set(), true).verbos.map((v) => v.nombre), ["buscar"]);
+
+  const envuelto = 'buscar = sub.add_parser(\n    "buscar", help="Una línea por entrada del almacén; barato")\nleer = sub.add_parser(\n    "leer", help="La entrada completa, por id")\n';
+  const verbos = leerCodigo("cli.py", "python", envuelto, new Set(), true).verbos;
+  assert.deepEqual(verbos.map((v) => v.nombre), ["buscar", "leer"]);
+  assert.deepEqual(verbos.map((v) => v.linea), [1, 3], "la línea evidenciada es la del add_parser(, no la del nombre");
+});
+
+test("dos add_parser seguidos, cada uno en su propia línea, no se duplican ni se cruzan", () => {
+  const codigo = 'sub.add_parser("a", help="x")\nsub.add_parser("b", help="y")\n';
+  const verbos = leerCodigo("cli.py", "python", codigo, new Set(), true).verbos;
+  assert.deepEqual(verbos.map((v) => v.nombre), ["a", "b"]);
+  assert.deepEqual(verbos.map((v) => v.linea), [1, 2]);
 });
