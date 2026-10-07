@@ -1,0 +1,17 @@
+[project]
+name = "herramienta"
+version = "0.4.0"
+dependencies = [
+  "click>=8.1",
+  "fastmcp>=2.0",  # el servidor MCP
+  "fastapi",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+herramienta = "herramienta.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+{
+  "esquema": 1,
+  "modelo": "sonnet",
+  "repeticiones": 1,
+  "tareas": [
+    {
+      "id": "titulo-de-t-1",
+      "enunciado": "¿Cuál es el título de la tarea t-1 de este repo? Contesta solo con el título, sin comillas.",
+      "terminado": { "tipo": "respuesta-contiene", "texto": "Medir" },
+      "presupuesto": { "rondas": 10, "usd": 0.5, "segundos": 300 }
+    },
+    {
+      "id": "entregar-t-1",
+      "enunciado": "Registra la entrega de la tarea t-1 con la evidencia «npm test pasa». Hazlo como dicen las guías del repo, sin editar a mano el estado.",
+      "terminado": {
+        "tipo": "comando",
+        "argv": ["node", "-e", "const l = require('fs').readFileSync('data/bitacora.jsonl', 'utf8').split('\\n'); process.exit(l.some((x) => x.includes('t-1') && x.includes('npm test pasa')) ? 0 : 1)"]
+      },
+      "presupuesto": { "rondas": 15, "usd": 0.75, "segundos": 600 }
+    }
+  ]
+}

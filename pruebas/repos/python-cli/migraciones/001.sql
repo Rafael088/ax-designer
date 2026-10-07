@@ -1,0 +1,2 @@
+CREATE TABLE tareas (id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS audit_log (autor TEXT, fecha TEXT);

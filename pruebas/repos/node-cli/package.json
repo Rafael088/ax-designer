@@ -1,0 +1,21 @@
+{
+  "name": "@demo/tareas",
+  "version": "1.2.3",
+  "type": "module",
+  "bin": {
+    "tareas": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/",
+    "check": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

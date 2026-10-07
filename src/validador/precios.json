@@ -1,0 +1,15 @@
+{
+  "fuente": "Precios de la API de Anthropic por millón de tokens (copia del 2026-06-24 de https://www.anthropic.com/pricing): sonnet = claude-sonnet-5 (2/10), opus = claude-opus-5 (5/25), haiku = claude-haiku-4-5 (1/5). Escritura de caché = 1,25 × entrada y lectura de caché = 0,1 × entrada, por la regla general de la API, no por la tabla. Sin comprobar contra la página en esta fecha: compruébalos, corrígelos aquí o pasa los tuyos con --precios, y pon verificado en true.",
+  "fecha": "2026-10-07",
+  "verificado": false,
+  "supuestos": {
+    "contexto_base_tokens": 15000,
+    "salida_por_ronda_tokens": 400,
+    "fuente": "Supuestos sin medir: contexto_base_tokens es lo que el agente manda en cada ronda antes de la tarea (prompt de sistema y definiciones de sus herramientas); salida_por_ronda_tokens, lo que escribe por ronda. La primera corrida real los mide: usage.cache_creation_input_tokens de una tarea corta y usage.output_tokens / num_turns en .ax-corridas/."
+  },
+  "modelos": {
+    "opus": { "entrada": 5, "salida": 25, "escritura_cache": 6.25, "lectura_cache": 0.5 },
+    "sonnet": { "entrada": 2, "salida": 10, "escritura_cache": 2.5, "lectura_cache": 0.2 },
+    "haiku": { "entrada": 1, "salida": 5, "escritura_cache": 1.25, "lectura_cache": 0.1 }
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+
+# Worktrees de las sesiones de agente
+.claude/worktrees/
+
+# Lo que deja `axd validar` al correr agentes de verdad (transcripciones, costos)
+.ax-corridas/
+
+.DS_Store

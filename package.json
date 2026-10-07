@@ -1,0 +1,48 @@
+{
+  "name": "ax-designer",
+  "version": "0.1.0",
+  "description": "Audita la Agent Experience (AX) de un repositorio y genera el código (CLI de verbos estrechos y MCP server) para que un agente lo opere con menos tokens, menos rondas y menos errores.",
+  "license": "MIT",
+  "author": "Rafael Aguirre",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "axd": "dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "agent-experience",
+    "ax",
+    "cli",
+    "mcp",
+    "model-context-protocol",
+    "agents",
+    "audit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rafael088/ax-designer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rafael088/ax-designer/issues"
+  },
+  "homepage": "https://github.com/Rafael088/ax-designer#readme",
+  "scripts": {
+    "axd": "node src/cli/main.ts",
+    "test": "node --test \"pruebas/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,671 @@
+{
+  "esquema": 1,
+  "version": 1,
+  "origen": "Los 7 ejes de la Revisión AX —la metodología de Agent Experience que axd aplica—, vueltos criterios observables. Explicación para personas en docs/rubrica.md.",
+  "fuentes": {
+    "inventario": "Se decide mirando el Inventario que entrega el analizador (archivos, manifiestos, guías para agentes, código leído sin ejecutar). No lanza nada.",
+    "medicion": "Se decide con un número del Contador de src/medicion/ (tokens = caracteres / 4) sobre caminos de lectura que el analizador ya leyó. No lanza nada.",
+    "corrida": "Solo se puede decidir ejecutando algo del repo objetivo, y eso es del validador (`axd validar --correr`). `axd auditar` lo deja en `sin-evidencia`; nunca lo adivina."
+  },
+  "evidencias": {
+    "archivo": "Ruta relativa al repo objetivo y línea (o rango) donde se ve lo que se afirma: {tipo, ruta, linea}.",
+    "medicion": "El camino medido y su número: {tipo, camino, tokens} (más archivos o ms si los hay). Un hallazgo de costo sin medición no se emite.",
+    "ausencia": "Lo que se buscó y dónde, para que otro repita la búsqueda: {tipo, buscado, en}. Es la evidencia de un `no-cumple` por falta de algo.",
+    "corrida": "El comando, su código de salida y el extracto de salida que decide: {tipo, comando, codigo, salida}. Solo la produce el validador."
+  },
+  "escala": {
+    "resultados": {
+      "cumple": { "valor": 2, "cuenta": true, "descripcion": "Lo que dice el enunciado se ve en el repo, con evidencia." },
+      "parcial": { "valor": 1, "cuenta": true, "descripcion": "Se ve a medias: existe pero no en todos los casos, o existe y no se descubre." },
+      "no-cumple": { "valor": 0, "cuenta": true, "descripcion": "No se ve, o se ve lo contrario. Lleva evidencia de tipo ausencia o archivo." },
+      "no-aplica": { "valor": null, "cuenta": false, "descripcion": "Se da la condición `no_aplica_si` del criterio. Sale del cálculo y de la cobertura, con el motivo." },
+      "sin-evidencia": { "valor": null, "cuenta": false, "descripcion": "Aplica, pero con lo disponible no se puede decidir (típicamente fuente `corrida` en `axd auditar`). Sale del cálculo y baja la cobertura." }
+    },
+    "puntuacion_eje": "round(100 × Σ(peso × valor) / Σ(peso × 2)) sobre los criterios del eje con resultado que cuenta. Si ninguno cuenta, null.",
+    "cobertura_eje": "Σ peso de los criterios que cuentan / Σ peso de los criterios que aplican (todos menos no-aplica). Entre 0 y 1, con dos decimales.",
+    "cobertura_minima": 0.5,
+    "niveles": [
+      { "nivel": 0, "nombre": "ausente", "desde": 0, "hasta": 25 },
+      { "nivel": 1, "nombre": "incipiente", "desde": 25, "hasta": 50 },
+      { "nivel": 2, "nombre": "suficiente", "desde": 50, "hasta": 80 },
+      { "nivel": 3, "nombre": "ejemplar", "desde": 80, "hasta": 101 }
+    ],
+    "reglas": [
+      "El nivel de un eje es el del tramo donde cae su puntuación: desde ≤ puntuación < hasta.",
+      "Si un criterio con `critico: true` sale no-cumple, el nivel del eje no pasa de 1 (incipiente), sea cual sea la puntuación.",
+      "Si la cobertura del eje es menor que `cobertura_minima`, el eje se informa con su puntuación pero con nivel null («sin evaluar»): con menos de la mitad del peso decidido, el número no representa al eje.",
+      "Si todos los criterios de un eje son no-aplica, el eje entero es no-aplica y se dice por qué; no cuenta como 0.",
+      "La puntuación global es la media simple de las puntuaciones de los ejes que tienen nivel. El informe muestra siempre los 7 ejes, también los que no tienen nivel."
+    ]
+  },
+  "prioridad": {
+    "descripcion": "Cada criterio en parcial o no-cumple es un Hallazgo. Se ordenan por cuánto contexto ahorran o cuánto riesgo quitan, nunca por lo fácil que es arreglarlos.",
+    "orden": [
+      "Primero los criterios críticos en no-cumple.",
+      "Luego por brecha = peso × (2 − valor), de mayor a menor.",
+      "A igual brecha, los de impacto `contexto` con medición, por tokens que ahorraría el cambio (camino actual − camino propuesto), de mayor a menor.",
+      "A igualdad, por número de eje y luego por el orden del criterio en este archivo, para que el orden sea estable."
+    ]
+  },
+  "ejes": [
+    {
+      "id": "lectura-barata",
+      "numero": 1,
+      "nombre": "Lectura barata",
+      "pregunta": "enterarse",
+      "resumen": "¿Puede el agente conocer el estado en una llamada, en formato de máquina y en milisegundos?",
+      "senal_de_problema": "Hay que abrir muchos archivos, arrancar la interfaz o leer prosa para sacar un número.",
+      "arreglo_tipico": "Un comando o endpoint de resumen que no cargue la app entera, con esquema estable.",
+      "referencia": "docs/rubrica.md — eje 1. Lectura barata",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "lectura-barata/resumen-existe",
+          "enunciado": "Existe un camino de solo lectura que devuelve el estado resumido del dominio: un subcomando, un endpoint o un archivo que la app mantiene al día.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": true,
+          "impacto": "contexto",
+          "como_se_mide": "Buscar en manifiestos (scripts), en los puntos de entrada de CLIs y APIs y en las guías para agentes un verbo o ruta de lectura de estado (estado, status, resumen, contexto, summary, --estado) o un archivo de estado generado (p. ej. estado.json).",
+          "cumple": "Existe y está nombrado en la guía para agentes o en el README.",
+          "parcial": "Existe pero solo se descubre leyendo el código.",
+          "no_cumple": "No existe: para conocer el estado hay que leer los datos o la interfaz.",
+          "no_aplica_si": null,
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "lectura-barata/formato-de-maquina",
+          "enunciado": "La lectura resumida sale en un formato de máquina (JSON por stdout, JSON en el archivo de estado o respuesta JSON del endpoint), no en texto para personas.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "En el código del camino de resumen, buscar la serialización (JSON.stringify, json.dumps, --json, --format json, Content-Type application/json) o que el archivo de estado sea .json.",
+          "cumple": "JSON (u otro formato estructurado) por defecto.",
+          "parcial": "Solo con una bandera (--json) o mezclado con texto decorativo.",
+          "no_cumple": "Solo texto para personas, tablas o colores.",
+          "no_aplica_si": "No existe camino de resumen (eso ya es no-cumple en lectura-barata/resumen-existe).",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "lectura-barata/esquema-versionado",
+          "enunciado": "La lectura resumida declara la versión de su esquema (una clave esquema, schema o version), para que quien la lee detecte un cambio de formato.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar la clave de versión en el objeto que se serializa o en el archivo de estado.",
+          "cumple": "La clave está y la guía o el código dicen que las claves se agregan y no se renombran.",
+          "parcial": "La clave está, sin regla de evolución escrita.",
+          "no_cumple": "No hay clave de versión.",
+          "no_aplica_si": "No existe camino de resumen.",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "lectura-barata/costo-del-resumen",
+          "enunciado": "Leer el resumen cuesta pocos tokens.",
+          "fuente": "medicion",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Tokens del camino de resumen con el Contador. Si es un archivo, su tamaño; si es un comando, su salida, que solo da el validador (sin ella, sin-evidencia).",
+          "metrica": {
+            "nombre": "tokens_resumen",
+            "unidad": "tokens",
+            "cumple": { "op": "<=", "valor": 500 },
+            "parcial": { "op": "<=", "valor": 2000 }
+          },
+          "cumple": "≤ 500 tokens.",
+          "parcial": "≤ 2.000 tokens.",
+          "no_cumple": "Más de 2.000 tokens: ya no es un resumen.",
+          "no_aplica_si": "No existe camino de resumen.",
+          "evidencia": ["medicion"]
+        },
+        {
+          "id": "lectura-barata/ahorro-frente-al-camino-caro",
+          "enunciado": "El camino barato ahorra de verdad frente al caro: leer los archivos donde vive el estado para saber lo mismo.",
+          "fuente": "medicion",
+          "peso": 3,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Razón tokens(camino caro) / tokens(camino barato). El camino caro son los archivos de estado del dominio que el analizador identificó (más la guía si hace falta leerla para interpretarlos). Si no hay camino barato, se mide el caro y ese número es la evidencia del no-cumple.",
+          "metrica": {
+            "nombre": "razon_caro_barato",
+            "unidad": "veces",
+            "cumple": { "op": ">=", "valor": 10 },
+            "parcial": { "op": ">=", "valor": 3 }
+          },
+          "cumple": "El barato es al menos 10 veces más barato.",
+          "parcial": "Entre 3 y 10 veces.",
+          "no_cumple": "Menos de 3 veces, o no hay camino barato (se informa el costo del caro).",
+          "no_aplica_si": "El estado del dominio entero cabe en menos de 500 tokens: no hay nada que abaratar.",
+          "evidencia": ["medicion"]
+        },
+        {
+          "id": "lectura-barata/sin-cargar-la-app",
+          "enunciado": "El código del resumen no importa la capa de interfaz ni arranca la aplicación entera.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Seguir los imports del módulo del resumen y buscar los de la interfaz (GTK, Qt, React, DOM, servidor web, framework de TUI) o el arranque de la app.",
+          "cumple": "No importa nada de la interfaz.",
+          "parcial": "La importa de forma perezosa o solo en un camino que el resumen no recorre.",
+          "no_cumple": "Para responder carga la interfaz o arranca la app.",
+          "no_aplica_si": "El proyecto no tiene interfaz, o no existe camino de resumen.",
+          "evidencia": ["archivo"]
+        }
+      ]
+    },
+    {
+      "id": "contrato-separado-de-la-vista",
+      "numero": 2,
+      "nombre": "Contrato separado de la vista",
+      "pregunta": "enterarse",
+      "resumen": "¿El estado del dominio vive en un formato que el agente lee directo, y el estado de interfaz vive aparte?",
+      "senal_de_problema": "Para saber qué pasa hay que entender la UI, o rediseñar la pantalla rompe al agente.",
+      "arreglo_tipico": "Separar el estado del dominio (archivos, base de datos, API) del de interfaz (selección, pestañas, desplegados), y que el agente lea solo el primero.",
+      "referencia": "docs/rubrica.md — eje 2. Contrato separado de la vista",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "contrato-separado-de-la-vista/dominio-legible",
+          "enunciado": "El estado del dominio vive en un almacenamiento que se lee sin la aplicación: archivos de texto o JSON, una base de datos con esquema, o una API.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Identificar en el Inventario dónde persiste el estado del dominio y en qué formato.",
+          "cumple": "Formato abierto y legible directo (Markdown, JSON, YAML, SQLite con esquema, API documentada).",
+          "parcial": "Se puede leer, pero en un formato que exige conocer la implementación (binario propio, pickle, blobs serializados).",
+          "no_cumple": "Solo existe en memoria de la app o en lo que pinta la interfaz.",
+          "no_aplica_si": "El proyecto no tiene estado propio (una biblioteca pura, un conversor sin estado).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "contrato-separado-de-la-vista/interfaz-aparte",
+          "enunciado": "El estado de interfaz (qué está seleccionado, desplegado o filtrado en pantalla) se guarda aparte del estado del dominio.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar dónde se persisten preferencias y estado de pantalla, y comprobar que no comparten archivo, tabla ni registro con el dominio.",
+          "cumple": "Archivo, tabla o carpeta propios, fuera de los datos del dominio.",
+          "parcial": "Separado por claves dentro del mismo archivo o registro.",
+          "no_cumple": "Mezclado con los datos del dominio.",
+          "no_aplica_si": "El proyecto no tiene interfaz para personas, o no persiste estado de interfaz.",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "contrato-separado-de-la-vista/lectura-sin-la-vista",
+          "enunciado": "Lo que el agente lee es el dato, no la vista: no tiene que interpretar HTML, salida de una TUI ni texto formateado para personas.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Mirar el camino que la guía para agentes indica para leer el estado (o, si no lo indica, el único que hay) y en qué formato llega.",
+          "cumple": "El agente lee datos estructurados.",
+          "parcial": "Lee datos, pero algún dato necesario solo aparece en la vista.",
+          "no_cumple": "Tiene que raspar la vista para saber el estado.",
+          "no_aplica_si": "El proyecto no tiene interfaz para personas.",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "contrato-separado-de-la-vista/contrato-documentado",
+          "enunciado": "El formato que lee el agente está escrito en un sitio: tipos, JSON Schema o una sección de la documentación con sus claves.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar la definición del formato (archivo de tipos o modelo, schema, sección de docs) y que cubra las claves que de verdad se escriben.",
+          "cumple": "Documentado y coincide con lo que se escribe.",
+          "parcial": "Documentado a medias, o solo como ejemplo.",
+          "no_cumple": "Solo se deduce leyendo el código que lo escribe.",
+          "no_aplica_si": null,
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "contrato-separado-de-la-vista/modelo-sobre-el-almacenamiento",
+          "enunciado": "Hay una capa de modelo entre lo que ve el agente y cómo se guarda: cambiar el almacenamiento no cambia el contrato.",
+          "fuente": "inventario",
+          "peso": 1,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar un módulo de modelo o tipos del dominio sin E/S, y que los verbos y lecturas del agente hablen en sus términos y no en los del formato de disco (tags, columnas, rutas).",
+          "cumple": "Existe y el agente solo ve sus términos.",
+          "parcial": "Existe, pero algún detalle del almacenamiento se filtra al agente.",
+          "no_cumple": "El contrato del agente es el formato de disco.",
+          "no_aplica_si": "El proyecto no tiene estado propio.",
+          "evidencia": ["archivo", "ausencia"]
+        }
+      ]
+    },
+    {
+      "id": "verbos-estrechos",
+      "numero": 3,
+      "nombre": "Verbos estrechos, y transiciones con dueño",
+      "pregunta": "actuar",
+      "resumen": "¿Hay operaciones con nombre en vez de «escribe el archivo», y qué transiciones no puede hacer el agente?",
+      "senal_de_problema": "La única forma de actuar es editar archivos, o el agente puede marcar su propio trabajo como aprobado.",
+      "arreglo_tipico": "Pocos verbos con nombre y contrato, que devuelven el estado nuevo, y un mapa de quién puede hacer cada transición.",
+      "referencia": "docs/rubrica.md — eje 3. Verbos estrechos, y transiciones con dueño",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "verbos-estrechos/operaciones-con-nombre",
+          "enunciado": "Los cambios de estado del dominio se hacen con operaciones con nombre (subcomandos, endpoints, tools), y la guía para agentes las indica como la vía para cambiar el estado.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Listar los verbos de escritura expuestos (CLI, API, MCP) y comprobar en la guía para agentes que se piden en lugar de editar los datos a mano.",
+          "cumple": "Hay verbos de escritura y la guía los da como la única vía.",
+          "parcial": "Hay verbos, pero la guía no los menciona o alguna operación todavía se hace editando archivos.",
+          "no_cumple": "No hay verbos: actuar es editar los datos.",
+          "no_aplica_si": "El agente no tiene que cambiar estado en este proyecto (solo lee).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "verbos-estrechos/superficie-estrecha",
+          "enunciado": "La superficie para el agente es pequeña: pocos verbos, cada uno con una sola responsabilidad.",
+          "fuente": "inventario",
+          "peso": 1,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Contar los verbos expuestos al agente (subcomandos de la CLI, tools del MCP o endpoints que cambian estado).",
+          "metrica": {
+            "nombre": "verbos_expuestos",
+            "unidad": "verbos",
+            "cumple": { "op": "<=", "valor": 15 },
+            "parcial": { "op": "<=", "valor": 30 }
+          },
+          "cumple": "≤ 15 verbos.",
+          "parcial": "Entre 16 y 30.",
+          "no_cumple": "Más de 30: es una API completa, no una superficie estrecha.",
+          "no_aplica_si": "No hay verbos (eso ya es no-cumple en verbos-estrechos/operaciones-con-nombre).",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "verbos-estrechos/transiciones-con-dueno",
+          "enunciado": "Está escrito quién puede hacer cada transición de estado (el sistema, el agente o una persona).",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar una tabla o lista de estados con su dueño en la guía o en el código (un mapa de transiciones permitidas por actor).",
+          "cumple": "Mapa explícito y el código lo hace cumplir.",
+          "parcial": "Escrito en la documentación, sin que el código lo haga cumplir, o al revés.",
+          "no_cumple": "No está en ningún sitio.",
+          "no_aplica_si": "El dominio no tiene estados ni flujo (no hay transiciones que repartir).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "verbos-estrechos/sin-autoaprobacion",
+          "enunciado": "El agente no tiene ningún verbo que valide su propio trabajo: aprobar, marcar como hecho o integrar en la rama principal es de una persona.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": true,
+          "impacto": "riesgo",
+          "como_se_mide": "Revisar los verbos expuestos al agente buscando los que cierran o aprueban (aprobar, finalizar, hecha, done, approve, merge, publish) y lo que la guía le permite hacer.",
+          "cumple": "Ningún verbo del agente cierra ni aprueba, y la guía lo dice.",
+          "parcial": "No hay verbo, pero la guía no lo veda y el agente podría hacerlo editando los datos.",
+          "no_cumple": "El agente tiene un verbo o una vía documentada para aprobar su propio trabajo.",
+          "no_aplica_si": "En el ciclo no hay revisión humana (el agente trabaja solo y no hay nada que aprobar).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "verbos-estrechos/devuelve-estado-nuevo",
+          "enunciado": "Cada verbo de escritura devuelve el estado resultante en formato de máquina, para que el agente no tenga que volver a leer.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Mirar qué serializa cada verbo de escritura al terminar bien.",
+          "metrica": {
+            "nombre": "proporcion_verbos_que_devuelven_estado",
+            "unidad": "proporcion",
+            "cumple": { "op": ">=", "valor": 0.8 },
+            "parcial": { "op": ">=", "valor": 0.4 }
+          },
+          "cumple": "Al menos el 80 % de los verbos de escritura.",
+          "parcial": "Entre el 40 y el 80 %.",
+          "no_cumple": "Menos del 40 %: tras actuar, el agente tiene que preguntar otra vez.",
+          "no_aplica_si": "No hay verbos de escritura.",
+          "evidencia": ["archivo"]
+        }
+      ]
+    },
+    {
+      "id": "escritura-verificada",
+      "numero": 4,
+      "nombre": "Escritura verificada e idempotente",
+      "pregunta": "demostrar",
+      "resumen": "¿Comprueba que lo que leyó sigue igual antes de escribir, escribe atómico y reintentar es seguro?",
+      "senal_de_problema": "Se escribe por número de línea o por posición sin verificar, o reintentar aplica el cambio dos veces.",
+      "arreglo_tipico": "Guardar una huella de lo leído (línea original, hash, versión), compararla antes de escribir, y escribir a temporal + reemplazo.",
+      "referencia": "docs/rubrica.md — eje 4. Escritura verificada e idempotente",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "escritura-verificada/huella-de-lectura",
+          "enunciado": "Antes de escribir se comprueba que lo leído sigue igual (línea original, hash, versión, ETag), y si cambió la operación falla en vez de pisar.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": true,
+          "impacto": "riesgo",
+          "como_se_mide": "En el código de cada escritura, buscar la comparación con una huella previa (o un parámetro de versión esperada en el verbo) y el error que lanza si no coincide. Escribir por número de línea u offset sin esa comparación es no-cumple.",
+          "cumple": "Todas las escrituras del dominio verifican y fallan con un error propio.",
+          "parcial": "Algunas escrituras verifican y otras no.",
+          "no_cumple": "Ninguna verifica: se pisa en silencio.",
+          "no_aplica_si": "El proyecto no escribe estado del dominio.",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "escritura-verificada/escritura-atomica",
+          "enunciado": "Las escrituras son atómicas: a temporal y reemplazo, o dentro de una transacción.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar en el código de escritura el patrón temporal + rename/replace (os.replace, fs.rename) o transacciones (BEGIN/COMMIT, transaction()).",
+          "cumple": "Todas las escrituras del dominio.",
+          "parcial": "Algunas.",
+          "no_cumple": "Ninguna: un corte a medias deja el dato roto.",
+          "no_aplica_si": "El proyecto no escribe estado del dominio, o lo delega entero en un servicio que ya garantiza atomicidad (API externa, base de datos gestionada).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "escritura-verificada/reintento-seguro",
+          "enunciado": "Repetir una operación con la misma entrada no aplica el cambio dos veces ni deja un estado distinto.",
+          "fuente": "corrida",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "El validador corre dos veces seguidas cada verbo de escritura sobre una copia del repo y compara el estado tras la primera y tras la segunda.",
+          "metrica": {
+            "nombre": "proporcion_verbos_idempotentes",
+            "unidad": "proporcion",
+            "cumple": { "op": ">=", "valor": 1 },
+            "parcial": { "op": ">=", "valor": 0.5 }
+          },
+          "cumple": "Todos los verbos de escritura son idempotentes o rechazan la repetición con un error claro.",
+          "parcial": "Al menos la mitad.",
+          "no_cumple": "Menos de la mitad.",
+          "no_aplica_si": "El proyecto no escribe estado del dominio.",
+          "evidencia": ["corrida"]
+        },
+        {
+          "id": "escritura-verificada/ensayo-antes-de-escribir",
+          "enunciado": "Las operaciones de efecto grande o difícil de deshacer tienen un ensayo (--simular, --dry-run) que dice qué haría sin hacerlo.",
+          "fuente": "inventario",
+          "peso": 1,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar banderas o modos de ensayo en los verbos que escriben muchos archivos, borran, publican o gastan dinero.",
+          "cumple": "El ensayo es lo que pasa por defecto y hay que pedir lo de verdad (--aplicar).",
+          "parcial": "Hay ensayo, pero hay que pedirlo.",
+          "no_cumple": "No hay ensayo.",
+          "no_aplica_si": "No hay operaciones de efecto grande o irreversible.",
+          "evidencia": ["archivo", "ausencia"]
+        }
+      ]
+    },
+    {
+      "id": "contexto-progresivo",
+      "numero": 5,
+      "nombre": "Contexto progresivo",
+      "pregunta": "enterarse",
+      "resumen": "¿Se puede pedir poco y luego más: índice barato primero, detalle bajo demanda, y filtros?",
+      "senal_de_problema": "La única lectura disponible devuelve el mundo entero.",
+      "arreglo_tipico": "Tres tamaños, tres costos: resumen, lista filtrada y detalle por identificador estable.",
+      "referencia": "docs/rubrica.md — eje 5. Contexto progresivo",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "contexto-progresivo/tres-tamanos",
+          "enunciado": "Hay lecturas de distinto tamaño: un resumen (conteos), una lista y el detalle de una sola cosa.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Contar cuántos de los tres tamaños existen entre las lecturas expuestas (resumen, lista, detalle por id).",
+          "metrica": {
+            "nombre": "tamanos_de_lectura",
+            "unidad": "tamaños",
+            "cumple": { "op": ">=", "valor": 3 },
+            "parcial": { "op": ">=", "valor": 2 }
+          },
+          "cumple": "Los tres.",
+          "parcial": "Dos.",
+          "no_cumple": "Uno o ninguno.",
+          "no_aplica_si": "El estado del dominio entero cabe en menos de 500 tokens.",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "contexto-progresivo/filtros",
+          "enunciado": "La lectura de lista acepta filtros por los ejes por los que pregunta el agente (estado, dueño, proyecto, fecha…).",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Contar las opciones de filtro de la lectura de lista.",
+          "metrica": {
+            "nombre": "filtros_de_lista",
+            "unidad": "filtros",
+            "cumple": { "op": ">=", "valor": 2 },
+            "parcial": { "op": ">=", "valor": 1 }
+          },
+          "cumple": "Dos filtros o más.",
+          "parcial": "Uno.",
+          "no_cumple": "Ninguno: la lista siempre trae todo.",
+          "no_aplica_si": "No hay lectura de lista, o el estado del dominio entero cabe en menos de 500 tokens.",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "contexto-progresivo/identificadores-estables",
+          "enunciado": "Cada cosa del dominio tiene un identificador estable (no su posición ni su número de línea) que se puede pasar entre llamadas y encontrar con grep.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Mirar cómo se nombran las entidades en los datos y en los verbos: un id guardado con la entidad, frente a índices, posiciones o (archivo, línea).",
+          "cumple": "Id estable guardado con cada entidad, y los verbos lo aceptan.",
+          "parcial": "Hay id, pero no todas las entidades lo tienen o los verbos piden otra cosa.",
+          "no_cumple": "La identidad es la posición: editar arriba cambia la de todo lo de abajo.",
+          "no_aplica_si": "El proyecto no tiene entidades que el agente tenga que nombrar.",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "contexto-progresivo/guia-de-entrada-acotada",
+          "enunciado": "Hay una guía de entrada para agentes (AGENTS.md, CLAUDE.md o llms.txt) corta, que apunta al detalle en vez de contenerlo.",
+          "fuente": "medicion",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Tokens de la guía de entrada con el Contador, siguiendo los archivos que incluye (p. ej. un CLAUDE.md que solo importa AGENTS.md cuenta lo importado). Si hay varias, la que se carga sola al entrar.",
+          "metrica": {
+            "nombre": "tokens_guia_de_entrada",
+            "unidad": "tokens",
+            "cumple": { "op": "<=", "valor": 2500 },
+            "parcial": { "op": "<=", "valor": 6000 }
+          },
+          "cumple": "Existe y cuesta ≤ 2.500 tokens.",
+          "parcial": "Existe y cuesta ≤ 6.000 tokens.",
+          "no_cumple": "No existe, o cuesta más de 6.000 tokens en cada sesión.",
+          "no_aplica_si": null,
+          "evidencia": ["medicion", "ausencia"]
+        },
+        {
+          "id": "contexto-progresivo/lectura-acotada",
+          "enunciado": "La lectura más amplia tiene un tope: paginación, límite o corte por defecto.",
+          "fuente": "inventario",
+          "peso": 1,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Buscar en la lectura de lista opciones de límite o paginación, o un corte por defecto.",
+          "cumple": "Tope por defecto, ampliable.",
+          "parcial": "Tope disponible, pero hay que pedirlo.",
+          "no_cumple": "Sin tope: crece con los datos.",
+          "no_aplica_si": "No hay lectura de lista, o el estado del dominio entero cabe en menos de 500 tokens.",
+          "evidencia": ["archivo", "ausencia"]
+        }
+      ]
+    },
+    {
+      "id": "errores-accionables",
+      "numero": 6,
+      "nombre": "Errores que dicen qué hacer",
+      "pregunta": "actuar",
+      "resumen": "¿El error nombra la causa y la salida, y distingue lo reintentable de lo que no?",
+      "senal_de_problema": "Errores que describen el síntoma sin la salida, stack traces, o fallos que no dejan rastro.",
+      "arreglo_tipico": "Errores en formato de máquina con la causa, el siguiente paso y si se puede reintentar; códigos de salida distintos por tipo.",
+      "referencia": "docs/rubrica.md — eje 6. Errores que dicen qué hacer",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "errores-accionables/errores-estructurados",
+          "enunciado": "Los errores que ve el agente llegan en formato de máquina (JSON con un campo de mensaje, tipos de error propios), no como stack trace.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Mirar cómo el punto de entrada (CLI, API, MCP) convierte las excepciones en salida: un manejador que serializa el error frente a dejar escapar la excepción.",
+          "cumple": "Hay un manejador central que serializa todos los errores.",
+          "parcial": "Algunos errores salen estructurados y otros escapan crudos.",
+          "no_cumple": "Los errores escapan como stack trace o texto libre.",
+          "no_aplica_si": "El proyecto no expone nada al agente (ni CLI, ni API, ni MCP).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "errores-accionables/nombran-la-salida",
+          "enunciado": "Cada error dice qué hacer a continuación (recarga y reintenta, pasa --proyecto, pide a una persona), no solo qué pasó.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "contexto",
+          "como_se_mide": "Sobre los sitios donde se construyen errores dirigidos al agente, proporción que lleva un siguiente paso (campo salida/hint, o un imperativo en el mensaje).",
+          "metrica": {
+            "nombre": "proporcion_errores_con_salida",
+            "unidad": "proporcion",
+            "cumple": { "op": ">=", "valor": 0.8 },
+            "parcial": { "op": ">=", "valor": 0.4 }
+          },
+          "cumple": "Al menos el 80 %.",
+          "parcial": "Entre el 40 y el 80 %.",
+          "no_cumple": "Menos del 40 %: ante un error el agente sale a explorar.",
+          "no_aplica_si": "El proyecto no expone nada al agente.",
+          "evidencia": ["archivo"]
+        },
+        {
+          "id": "errores-accionables/reintentable-distinguido",
+          "enunciado": "Se distingue lo reintentable de lo que no, con un campo o con códigos de salida distintos (uso incorrecto, error, conflicto, hace falta una persona).",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar un campo de reintento en los errores o un mapa de códigos de salida, y que esté documentado.",
+          "cumple": "Campo o códigos distintos, documentados en la guía.",
+          "parcial": "Existen pero no están documentados, o solo distinguen éxito de fallo.",
+          "no_cumple": "Todo error es igual: código 1 y texto.",
+          "no_aplica_si": "El proyecto no expone nada al agente.",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "errores-accionables/fallos-visibles",
+          "enunciado": "Ningún fallo se traga en silencio: lo que no se pudo leer o escribir queda a la vista (un aviso en el resumen, un error), no como un resultado vacío.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Contar los manejadores de excepción vacíos o que devuelven un valor por defecto sin avisar (catch {}, except: pass, except Exception: return []) en el código del dominio.",
+          "metrica": {
+            "nombre": "fallos_silenciosos",
+            "unidad": "sitios",
+            "cumple": { "op": "<=", "valor": 0 },
+            "parcial": { "op": "<=", "valor": 2 }
+          },
+          "cumple": "Ninguno.",
+          "parcial": "Uno o dos.",
+          "no_cumple": "Más de dos.",
+          "no_aplica_si": null,
+          "evidencia": ["archivo", "ausencia"]
+        }
+      ]
+    },
+    {
+      "id": "evidencia-y-trazabilidad",
+      "numero": 7,
+      "nombre": "Evidencia y trazabilidad",
+      "pregunta": "demostrar",
+      "resumen": "¿Cómo demuestra el agente que hizo lo que dice, y dónde queda quién hizo qué?",
+      "senal_de_problema": "El agente dice «listo» y comprobarlo cuesta lo mismo que haberlo hecho.",
+      "arreglo_tipico": "Entregar exige evidencia verificable (archivos, salida de pruebas, commit) y cada operación queda en una bitácora con su autor.",
+      "referencia": "docs/rubrica.md — eje 7. Evidencia y trazabilidad",
+      "peso": 1,
+      "criterios": [
+        {
+          "id": "evidencia-y-trazabilidad/entrega-con-evidencia",
+          "enunciado": "Dar un trabajo por terminado exige adjuntar evidencia verificable: archivos tocados, comando y salida de pruebas, commit.",
+          "fuente": "inventario",
+          "peso": 3,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Mirar el verbo o el procedimiento de entrega (o, si no hay verbo, lo que pide la guía) y si la evidencia es obligatoria.",
+          "cumple": "El verbo de entrega se niega sin evidencia.",
+          "parcial": "La evidencia se pide en la guía o es opcional en el verbo.",
+          "no_cumple": "Entregar no pide nada.",
+          "no_aplica_si": "En el ciclo no hay entrega ni revisión (el agente no le pasa trabajo a nadie).",
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "evidencia-y-trazabilidad/registro-de-quien-hizo-que",
+          "enunciado": "Queda un registro de cada operación con quién la hizo y cuándo.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar una bitácora del dominio solo de anexar (jsonl, tabla de auditoría) con autor y fecha, o en su defecto el control de versiones.",
+          "cumple": "Bitácora del dominio con autor y fecha en cada operación.",
+          "parcial": "Solo el historial de git, o una bitácora sin autor.",
+          "no_cumple": "Ni bitácora ni control de versiones.",
+          "no_aplica_si": null,
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "evidencia-y-trazabilidad/pruebas-repetibles",
+          "enunciado": "Hay un comando único y documentado para comprobar que todo funciona, que otro puede repetir para verificar una entrega.",
+          "fuente": "inventario",
+          "peso": 2,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Buscar en manifiestos y guías el script de pruebas (npm test, make check, pytest) y que haya pruebas que lo alimenten.",
+          "cumple": "Comando documentado en la guía y con pruebas detrás.",
+          "parcial": "Hay pruebas pero no un comando documentado, o el comando no cubre el código que escribe.",
+          "no_cumple": "No hay pruebas.",
+          "no_aplica_si": null,
+          "evidencia": ["archivo", "ausencia"]
+        },
+        {
+          "id": "evidencia-y-trazabilidad/criterio-de-hecho",
+          "enunciado": "Las tareas del proyecto están escritas con un criterio de hecho comprobable, para que la evidencia tenga contra qué medirse.",
+          "fuente": "inventario",
+          "peso": 1,
+          "critico": false,
+          "impacto": "riesgo",
+          "como_se_mide": "Sobre las tareas que el analizador encuentre en el repo (archivo de tareas, issues exportados), proporción con criterio de hecho (lista de aceptación, «hecho cuando…», comando que debe pasar).",
+          "metrica": {
+            "nombre": "proporcion_tareas_con_criterio",
+            "unidad": "proporcion",
+            "cumple": { "op": ">=", "valor": 0.8 },
+            "parcial": { "op": ">=", "valor": 0.4 }
+          },
+          "cumple": "Al menos el 80 % de las tareas.",
+          "parcial": "Entre el 40 y el 80 %.",
+          "no_cumple": "Menos del 40 %: nadie puede cerrarlas, ni persona ni agente.",
+          "no_aplica_si": "El repo no lleva tareas dentro.",
+          "evidencia": ["archivo"]
+        }
+      ]
+    }
+  ]
+}
