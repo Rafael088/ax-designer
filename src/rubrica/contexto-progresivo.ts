@@ -67,9 +67,18 @@ function filtros(inventario: Inventario, medicion: Medicion, lista: Ubicacion | 
   return porMetrica(c, contarFiltros(inventario, lista), [evidenciaArchivo(lista.archivo, lista.linea)]);
 }
 
+/** Si `ruta` es (un día de) una bitácora del Inventario: sus registros se nombran por fecha y
+ *  orden, no por id, así que no son entidades que el agente tenga que nombrar. */
+function esDeBitacora(inventario: Inventario, ruta: Ruta): boolean {
+  const carpeta = (r: Ruta) => r.slice(0, r.lastIndexOf("/") + 1);
+  return inventario.trazabilidad.bitacoras.some((b) =>
+    b.ruta === ruta || (b.archivos !== undefined && carpeta(b.ruta) === carpeta(ruta) && /^\d{4}-\d{2}-\d{2}\.md$/.test(ruta.slice(carpeta(ruta).length))),
+  );
+}
+
 function identificadoresEstables(inventario: Inventario): CriterioDecidido {
   const c = criterioJson(EJE, "identificadores-estables");
-  const dominio = inventario.estado.filter((e) => e.rol === "dominio");
+  const dominio = inventario.estado.filter((e) => e.rol === "dominio" && !esDeBitacora(inventario, e.ruta));
   if (dominio.length === 0) return noAplica(c, "El proyecto no tiene entidades que el agente tenga que nombrar.");
   const conId = dominio.filter((e) => e.claves?.some((k) => /^id$/i.test(k)) ?? false);
   if (conId.length === 0) {
@@ -80,7 +89,14 @@ function identificadoresEstables(inventario: Inventario): CriterioDecidido {
   const aceptanId = inventario.superficies.banderas.some((b) => b.banderas.some((f) => /^--id$/i.test(f))) || inventario.superficies.api.some((r) => /[:{]id\}?\b/i.test(r.ruta));
   const ev = [evidenciaArchivo(conId[0]!.ruta, 1)];
   if (conId.length === dominio.length && aceptanId) return cumple(c, "Las entidades guardan un id estable y los verbos lo aceptan.", ev);
-  return parcial(c, conId.length < dominio.length ? "No todas las entidades del dominio guardan un id." : "Hay id, pero no se ve que los verbos lo acepten.", ev);
+  if (conId.length < dominio.length) {
+    const sinId = dominio.filter((e) => !conId.includes(e));
+    const nombrados = sinId.slice(0, 3).map((e) => e.ruta).join(", ") + (sinId.length > 3 ? ` y ${sinId.length - 3} más` : "");
+    return parcial(c, `No todas las entidades del dominio guardan un id: ${conId.length} de ${dominio.length} archivos; sin id, ${nombrados}.`, [
+      ...ev, evidenciaAusencia("clave id (frontmatter, primer nivel o id de bloque ^abc en cada ítem)", sinId.map((e) => e.ruta).join(", ")),
+    ]);
+  }
+  return parcial(c, "Hay id, pero no se ve que los verbos lo acepten.", ev);
 }
 
 function guiaDeEntradaAcotada(medicion: Medicion): CriterioDecidido {

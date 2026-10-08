@@ -37,7 +37,7 @@ test("--help responde JSON con los verbos de axd", () => {
   const verbos = json["verbos"] as { verbo: string }[];
   assert.deepEqual(
     verbos.map((v) => v.verbo.split(" ")[0]).sort(),
-    ["analizar", "auditar", "contrato", "generar", "medir", "validar"],
+    ["analizar", "auditar", "contrato", "estado", "generar", "medir", "validar"],
   );
 });
 

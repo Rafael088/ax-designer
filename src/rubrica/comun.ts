@@ -3,7 +3,8 @@
 // CriterioDecidido con la escala fija (cumple 2 · parcial 1 · no-cumple 0 · no-aplica · sin-evidencia).
 // Así cada eje solo escribe la heurística propia, nunca la forma del resultado ni la comparación
 // con un umbral.
-import type { CriterioDecidido, Evidencia, Impacto, Inventario, Resultado, Ruta, Senal, TipoDeSenal } from "../modelo/index.ts";
+import type { CriterioDecidido, Evidencia, Impacto, Inventario, Manejador, Resultado, Ruta, Senal, TipoDeSenal } from "../modelo/index.ts";
+import { ErrorAx } from "../modelo/index.ts";
 import rubrica from "./criterios.json" with { type: "json" };
 
 /** Cuántas líneas después de donde se declara un verbo se miran buscando lo que hace al terminar
@@ -41,9 +42,17 @@ const DATOS = rubrica as RubricaJsonCompleta;
 export const COBERTURA_MINIMA: number = DATOS.escala.cobertura_minima;
 export const NIVELES: NivelJson[] = DATOS.escala.niveles;
 
+/** Un criterio que el código pide y criterios.json no tiene: es un fallo de axd, no del repo auditado. */
+function falloDeRubrica(mensaje: string): ErrorAx {
+  return new ErrorAx(mensaje, {
+    codigo: 3,
+    salida: "Compara src/rubrica/criterios.json con el id que pide el código y corrige el que esté mal; `node --test pruebas/rubrica` lo comprueba.",
+  });
+}
+
 export function ejeJson(id: string): EjeJson {
   const eje = DATOS.ejes.find((e) => e.id === id);
-  if (!eje) throw new Error(`criterios.json no tiene el eje «${id}»: revisa que no se haya renombrado.`);
+  if (!eje) throw falloDeRubrica(`criterios.json no tiene el eje «${id}»: revisa que no se haya renombrado.`);
   return eje;
 }
 
@@ -51,7 +60,7 @@ export function ejeJson(id: string): EjeJson {
 export function criterioJson(ejeId: string, slug: string): CriterioJson {
   const id = `${ejeId}/${slug}`;
   const criterio = ejeJson(ejeId).criterios.find((c) => c.id === id);
-  if (!criterio) throw new Error(`criterios.json no tiene el criterio «${id}»: revisa que no se haya renombrado.`);
+  if (!criterio) throw falloDeRubrica(`criterios.json no tiene el criterio «${id}»: revisa que no se haya renombrado.`);
   return criterio;
 }
 
@@ -91,7 +100,7 @@ export function sinEvidencia(c: CriterioJson, motivo: string): CriterioDecidido 
 /** Compara `valor` contra `c.metrica`: primero el umbral de cumple, luego el de parcial, si no no-cumple. */
 export function porMetrica(c: CriterioJson, valor: number, evidencia: Evidencia[] = []): CriterioDecidido {
   const m = c.metrica;
-  if (!m) throw new Error(`${c.id}: no tiene metrica en criterios.json`);
+  if (!m) throw falloDeRubrica(`${c.id}: no tiene metrica en criterios.json`);
   const pasa = (u: { op: Operador; valor: number }) => (u.op === "<=" ? valor <= u.valor : valor >= u.valor);
   const motivo = `${m.nombre} = ${valor} ${m.unidad}.`;
   if (pasa(m.cumple)) return cumple(c, motivo, evidencia);
@@ -130,4 +139,29 @@ export function haySenalCerca(
   ventana = VENTANA_DE_VERBO,
 ): Senal | undefined {
   return inventario.senales.find((s) => s.archivo === archivo && tipos.includes(s.tipo) && s.linea >= linea && s.linea <= linea + ventana);
+}
+
+/** Las líneas del despacho mismo: la del verbo y las dos siguientes, las mismas en que el
+ *  analizador busca a qué función despacha un `case`. Un case que hace el trabajo ahí
+ *  (`return console.log(JSON.stringify({ esquema: 1, ...leerEstado() }))`) lo hace ahí, aunque la
+ *  última llamada lleve a otra función. */
+export const LINEAS_DEL_DESPACHO = 2;
+
+/** Dónde mirar lo que hace un verbo: las líneas de su despacho y su manejador entero si el
+ *  analizador siguió el despacho (de su línea a su fin, en su archivo, que puede ser otro módulo,
+ *  más las funciones locales a las que llama); si no, la ventana de VENTANA_DE_VERBO tras donde se
+ *  declara. */
+export type VerboUbicado = { archivo: Ruta; linea: number; manejador?: Manejador | undefined };
+
+export function haySenalEnElVerbo(inventario: Inventario, verbo: VerboUbicado, tipos: readonly TipoDeSenal[]): Senal | undefined {
+  const m = verbo.manejador;
+  if (m === undefined) return haySenalCerca(inventario, verbo.archivo, verbo.linea, tipos);
+  const enElDespacho = haySenalCerca(inventario, verbo.archivo, verbo.linea, tipos, LINEAS_DEL_DESPACHO);
+  if (enElDespacho !== undefined) return enElDespacho;
+  const archivo = m.archivo ?? verbo.archivo;
+  for (const r of [m, ...(m.llama ?? [])]) {
+    const senal = haySenalCerca(inventario, archivo, r.linea, tipos, r.hasta - r.linea);
+    if (senal !== undefined) return senal;
+  }
+  return undefined;
 }

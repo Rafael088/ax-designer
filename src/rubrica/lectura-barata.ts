@@ -3,18 +3,18 @@
 // resumen (un verbo, un endpoint, una tool de MCP, o en su defecto un archivo de estado del
 // dominio con nombre de resumen). Si no hay camino de resumen, los otros cuatro de inventario
 // salen no-aplica: no hay nada que describir.
-import type { CriterioDecidido, Inventario, Medicion, Ruta } from "../modelo/index.ts";
+import type { CriterioDecidido, Inventario, Manejador, Medicion, Ruta } from "../modelo/index.ts";
 import { contarTokens } from "../medicion/index.ts";
 import {
   criterioJson, cumple, evidenciaArchivo, evidenciaAusencia, evidenciaMedicion,
-  haySenalCerca, noAplica, noCumple, parcial, porMetrica, sinEvidencia,
+  haySenalEnElVerbo, noAplica, noCumple, parcial, porMetrica, sinEvidencia,
 } from "./comun.ts";
 
 const EJE = "lectura-barata";
 const NOMBRE_RESUMEN = /^(estado|status|resumen|contexto|summary)$/i;
 
 export type Resumen =
-  | { tipo: "verbo"; nombre: string; archivo: Ruta; linea: number }
+  | { tipo: "verbo"; nombre: string; archivo: Ruta; linea: number; manejador?: Manejador | undefined }
   | { tipo: "archivo"; ruta: Ruta; formato: string; caracteres: number; claves: string[] | undefined };
 
 /** El camino de solo lectura al estado resumido: un verbo con nombre de estado, o el archivo de
@@ -22,7 +22,7 @@ export type Resumen =
  *  La usa también contexto-progresivo, para no duplicar la misma heurística en dos ejes. */
 export function buscarResumen(inventario: Inventario): Resumen | undefined {
   const verbo = inventario.superficies.cli.find((v) => NOMBRE_RESUMEN.test(v.nombre));
-  if (verbo) return { tipo: "verbo", nombre: verbo.nombre, archivo: verbo.archivo, linea: verbo.linea };
+  if (verbo) return { tipo: "verbo", nombre: verbo.nombre, archivo: verbo.archivo, linea: verbo.linea, manejador: verbo.manejador };
   const api = inventario.superficies.api.find((r) => NOMBRE_RESUMEN.test(ultimoSegmento(r.ruta)));
   if (api) return { tipo: "verbo", nombre: api.ruta, archivo: api.archivo, linea: api.linea };
   const tool = inventario.superficies.mcp_tools.find((t) => NOMBRE_RESUMEN.test(t.nombre));
@@ -75,8 +75,20 @@ function formatoDeMaquina(inventario: Inventario, resumen: Resumen | undefined):
     if (resumen.formato === "csv") return parcial(c, "El archivo de resumen es CSV: tabular, sin claves con nombre.", [ev]);
     return noCumple(c, `El archivo de resumen es ${resumen.formato}, no un formato de máquina.`, [ev]);
   }
-  const serializa = haySenalCerca(inventario, resumen.archivo, resumen.linea, ["serializa-json"]);
+  const serializa = haySenalEnElVerbo(inventario, resumen, ["serializa-json"]);
   if (serializa) return cumple(c, "Serializa JSON cerca de donde se declara el verbo de resumen.", [evidenciaArchivo(serializa.archivo, serializa.linea)]);
+  // Un CLI que imprime en un solo sitio (`imprimir(resultado)` con JSON.stringify) y cuyos
+  // manejadores solo arman el objeto: si el del resumen arma uno con clave de esquema y el mismo
+  // archivo serializa JSON, la salida por defecto es JSON aunque no se vea junto al verbo.
+  const versionado = resumen.manejador !== undefined ? haySenalEnElVerbo(inventario, resumen, ["clave-de-esquema"]) : undefined;
+  const archivoDelManejador = resumen.manejador?.archivo ?? resumen.archivo;
+  const serializaciones = inventario.senales.filter((s) => s.tipo === "serializa-json" && s.archivo === archivoDelManejador);
+  const central = serializaciones.find((s) => /JSON\.stringify|json\.dumps?/.test(s.texto)) ?? serializaciones[0];
+  if (versionado && central) {
+    return cumple(c, "El manejador del resumen arma un objeto con clave de esquema y el archivo lo serializa a JSON en un solo sitio.", [
+      evidenciaArchivo(versionado.archivo, versionado.linea), evidenciaArchivo(central.archivo, central.linea),
+    ]);
+  }
   const conJson = inventario.superficies.banderas.find((b) => b.archivo === resumen.archivo)?.banderas.includes("--json") ?? false;
   if (conJson) return parcial(c, "Solo sale en JSON con --json.", [evidenciaArchivo(resumen.archivo, resumen.linea)]);
   return noCumple(c, "No se ve una serialización JSON cerca del verbo de resumen.", [
@@ -96,7 +108,7 @@ function esquemaVersionado(inventario: Inventario, resumen: Resumen | undefined)
       ? cumple(c, "Declara su versión y una guía da la regla de evolución.", [ev])
       : parcial(c, "Declara su versión, sin una regla de evolución escrita.", [ev]);
   }
-  const senal = haySenalCerca(inventario, resumen.archivo, resumen.linea, ["clave-de-esquema"]);
+  const senal = haySenalEnElVerbo(inventario, resumen, ["clave-de-esquema"]);
   if (senal === undefined) {
     return noCumple(c, "No hay una clave de esquema serializada cerca del verbo de resumen.", [
       evidenciaAusencia("clave esquema, schema o version serializada cerca del verbo", `${resumen.archivo} desde la línea ${resumen.linea}`),

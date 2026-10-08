@@ -105,6 +105,26 @@ export type VerboCli = Ubicacion & {
   /** Banderas largas que aparecen entre la línea del verbo y la del siguiente (o 20 líneas):
    *  una ventana, no un parser; el contrato las toma como entradas propuestas del verbo. */
   banderas: string[];
+  /** De `banderas`, las que el parser exige (`required=True` de argparse/click, `required: true`,
+   *  `.requiredOption(` de commander): sin ellas el verbo se niega aunque su código no construya
+   *  ningún error. Solo si hay alguna. */
+  banderas_requeridas?: string[];
+  /** La función a la que despacha el verbo, de su línea de inicio a la de su fin: la que llama el
+   *  `case` de un switch, la de `set_defaults(funcion=…)` de argparse, la que decora click/typer, o
+   *  la que llama el `if` que compara con el nombre del verbo. La rúbrica mira ahí (y en `llama`),
+   *  no 20 líneas tras la declaración. Sin `manejador`, no se supo seguir el despacho. */
+  manejador?: Manejador;
+};
+
+export type Manejador = {
+  linea: number;
+  hasta: number;
+  /** Solo si la función vive en otro módulo del repo, importado por el archivo del verbo
+   *  (`return estado.main()` con `from . import estado`). Sin él, es el archivo del verbo. */
+  archivo?: Ruta;
+  /** Las funciones del mismo módulo que el manejador a las que este llama, hasta dos saltos y
+   *  ocho funciones (`main` → `calcular` → `resumir`): el trabajo a menudo está ahí. */
+  llama?: { linea: number; hasta: number }[];
 };
 
 export type MetodoHttp = "get" | "post" | "put" | "patch" | "delete" | "all";
@@ -144,7 +164,9 @@ export type ArchivoDeEstado = {
   caracteres: number;
   /** Por qué se tomó por archivo de estado (nombre, carpeta). */
   motivo: string;
-  /** Claves de primer nivel (JSON/YAML/TOML) o del primer registro (JSONL), o del frontmatter (md). */
+  /** Claves de primer nivel (JSON/YAML/TOML) o del primer registro (JSONL), o del frontmatter (md).
+   *  En Markdown, además, «id» si al menos la mitad de los ítems de lista del cuerpo llevan un id
+   *  de bloque de Obsidian (`- [ ] tarea ^abc-123`): la entidad es la línea y su id va en ella. */
   claves?: string[];
   /** Registros, para JSONL y CSV. */
   registros?: number;
@@ -190,8 +212,10 @@ export type ArchivoDeTareas = {
 
 export type Trazabilidad = {
   git: boolean;
-  /** Archivos de solo anexar que parecen bitácora (jsonl de eventos, auditoría). */
-  bitacoras: { ruta: Ruta; registros: number; claves: string[] }[];
+  /** Archivos de solo anexar que parecen bitácora (jsonl de eventos, auditoría), o una carpeta
+   *  de un Markdown por día (`bitacora/AAAA-MM-DD.md`), que cuenta como una sola: entonces `ruta`
+   *  es el día más reciente, `claves` las del frontmatter y `archivos` cuántos días hay. */
+  bitacoras: { ruta: Ruta; registros: number; claves: string[]; archivos?: number }[];
 };
 
 export type TipoDeSenal =

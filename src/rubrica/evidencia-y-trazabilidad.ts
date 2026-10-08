@@ -8,15 +8,18 @@ import { criterioJson, cumple, evidenciaArchivo, evidenciaAusencia, haySenalCerc
 const EJE = "evidencia-y-trazabilidad";
 const NOMBRE_ENTREGA = /^(entregar|entrega|deliver|submit)$/i;
 
-type Ubicacion = { archivo: Ruta; linea: number };
+type Ubicacion = { archivo: Ruta; linea: number; banderas_requeridas?: string[] | undefined };
+const BANDERA_DE_EVIDENCIA = /^--(evidencia|evidence|prueba)\b/i;
 
 function ultimoSegmento(ruta: string): string {
   return ruta.split("/").filter(Boolean).pop() ?? ruta;
 }
 
 function buscarEntrega(inventario: Inventario): Ubicacion | undefined {
-  const verbo = inventario.superficies.cli.find((v) => NOMBRE_ENTREGA.test(v.nombre)) ?? inventario.superficies.mcp_tools.find((t) => NOMBRE_ENTREGA.test(t.nombre));
-  if (verbo) return { archivo: verbo.archivo, linea: verbo.linea };
+  const cli = inventario.superficies.cli.find((v) => NOMBRE_ENTREGA.test(v.nombre));
+  if (cli) return { archivo: cli.archivo, linea: cli.linea, banderas_requeridas: cli.banderas_requeridas };
+  const tool = inventario.superficies.mcp_tools.find((t) => NOMBRE_ENTREGA.test(t.nombre));
+  if (tool) return { archivo: tool.archivo, linea: tool.linea };
   const api = inventario.superficies.api.find((r) => NOMBRE_ENTREGA.test(ultimoSegmento(r.ruta)));
   return api ? { archivo: api.archivo, linea: api.linea } : undefined;
 }
@@ -26,7 +29,7 @@ function entregaConEvidencia(inventario: Inventario): CriterioDecidido {
   const entrega = buscarEntrega(inventario);
   if (entrega === undefined) return noAplica(c, "No se encontró un verbo de entrega: puede que en el ciclo no haya entrega ni revisión.");
   const banderas = inventario.superficies.banderas.find((b) => b.archivo === entrega.archivo)?.banderas ?? [];
-  const pideEvidencia = banderas.some((b) => /^--(evidencia|evidence|prueba)\b/i.test(b));
+  const pideEvidencia = banderas.some((b) => BANDERA_DE_EVIDENCIA.test(b));
   const ev = [evidenciaArchivo(entrega.archivo, entrega.linea)];
   if (!pideEvidencia) {
     const documentaEvidencia = inventario.guias.some((g) => /evidencia|evidence/i.test(g.contenido));
@@ -34,6 +37,8 @@ function entregaConEvidencia(inventario: Inventario): CriterioDecidido {
       ? parcial(c, "La evidencia se pide en una guía, no en el verbo de entrega.", ev)
       : noCumple(c, "El verbo de entrega no pide evidencia.", [evidenciaAusencia("bandera --evidencia o --prueba en el verbo de entrega", entrega.archivo)]);
   }
+  const exigida = entrega.banderas_requeridas?.find((b) => BANDERA_DE_EVIDENCIA.test(b));
+  if (exigida !== undefined) return cumple(c, `El verbo de entrega exige ${exigida}: el parser se niega a entregar sin ella.`, ev);
   const rechaza = haySenalCerca(inventario, entrega.archivo, entrega.linea, ["construye-error", "codigo-de-salida"]);
   return rechaza !== undefined
     ? cumple(c, "El verbo de entrega pide evidencia y se niega si falta.", ev)

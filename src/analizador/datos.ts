@@ -97,11 +97,29 @@ export function clavesDe(formato: FormatoDeDatos, texto: string): { claves?: str
     }
     case "markdown": {
       const frontmatter = /^---\n([\s\S]*?)\n---/.exec(texto)?.[1];
-      return frontmatter === undefined ? {} : { claves: [...new Set([...frontmatter.matchAll(/^([\w-]+)\s*:/gm)].map((m) => m[1]!))] };
+      const claves = frontmatter === undefined ? [] : [...new Set([...frontmatter.matchAll(/^([\w-]+)\s*:/gm)].map((m) => m[1]!))];
+      if (!claves.includes("id") && listaConIdsDeBloque(texto)) claves.push("id");
+      return claves.length === 0 ? {} : { claves };
     }
     default:
       return {};
   }
+}
+
+/** Un id de bloque de Obsidian al final de la línea: «- [ ] Hacer algo ^tarea-a1b2». */
+const ID_DE_BLOQUE = /\s\^([A-Za-z0-9][\w-]*)\s*$/;
+const ITEM_DE_LISTA = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
+
+/**
+ * Si la lista del cuerpo identifica cada ítem con un id de bloque (`^abc` al final de la línea,
+ * como guardan algunos gestores cada tarea en `datos/tareas.md`): la entidad es la línea y su id va en el
+ * cuerpo, no en el frontmatter. Cuenta si al menos la mitad de los ítems lo llevan, para no tomar
+ * por identificador un `^ancla` suelto que solo sirve para enlazar un párrafo.
+ */
+function listaConIdsDeBloque(texto: string): boolean {
+  const items = texto.split("\n").filter((l) => ITEM_DE_LISTA.test(l));
+  const conId = items.filter((l) => ID_DE_BLOQUE.test(l)).length;
+  return conId > 0 && conId * 2 >= items.length;
 }
 
 function jsonOIndefinido(texto: string): unknown {
@@ -183,14 +201,47 @@ export function leerTareas(ruta: Ruta, texto: string): ArchivoDeTareas {
 
 // --- bitácoras y MCP ---
 
+const NOMBRE_DE_BITACORA = /(bitacora|log|audit|auditoria|historial|history|events|eventos|journal|registro)/i;
+const CARPETA_DE_BITACORA = /^(bitacoras?|logs?|journal|diario|historial|history|registros?|auditoria|audit)$/i;
+const DIA = /^\d{4}-\d{2}-\d{2}\.md$/;
+
 export function esBitacora(archivo: ArchivoVisto): boolean {
-  return (archivo.extension === "jsonl" || archivo.extension === "ndjson") &&
-    /(bitacora|log|audit|auditoria|historial|history|events|eventos|journal|registro)/i.test(archivo.ruta);
+  if (archivo.extension === "jsonl" || archivo.extension === "ndjson") return NOMBRE_DE_BITACORA.test(archivo.ruta);
+  return esBitacoraPorDia(archivo);
 }
 
-export function leerBitacora(archivo: ArchivoVisto, texto: string): Trazabilidad["bitacoras"][number] {
-  const { claves = [], registros = 0 } = clavesDe("jsonl", texto);
-  return { ruta: archivo.ruta, registros, claves };
+/** Una bitácora de un archivo por día en Markdown: `bitacora/AAAA-MM-DD.md` (por
+ *  ejemplo `bitacora/2026-10-04.md` con frontmatter `fecha:`). El nombre fechado y la carpeta
+ *  con nombre de bitácora van juntos: un `docs/2026-10-04.md` suelto no es una bitácora. */
+export function esBitacoraPorDia(archivo: ArchivoVisto): boolean {
+  if (archivo.extension !== "md" || !DIA.test(archivo.nombre)) return false;
+  const carpeta = archivo.ruta.split("/").slice(-2, -1)[0];
+  return carpeta !== undefined && CARPETA_DE_BITACORA.test(carpeta);
+}
+
+/**
+ * Anota una bitácora en `bitacoras`. Las de un archivo por día se juntan en una sola entrada por
+ * carpeta (365 días no son 365 bitácoras): `ruta` es el día más reciente, `registros` la suma de
+ * los ítems de lista de todos los días, `claves` las del frontmatter y `archivos` cuántos días hay.
+ */
+export function anotarBitacora(bitacoras: Trazabilidad["bitacoras"], archivo: ArchivoVisto, texto: string): void {
+  if (!esBitacoraPorDia(archivo)) {
+    const { claves = [], registros = 0 } = clavesDe("jsonl", texto);
+    bitacoras.push({ ruta: archivo.ruta, registros, claves });
+    return;
+  }
+  const carpeta = archivo.ruta.slice(0, archivo.ruta.length - archivo.nombre.length);
+  const claves = clavesDe("markdown", texto).claves ?? [];
+  const registros = texto.split("\n").filter((l) => /^\s*[-*+]\s+\S/.test(l)).length;
+  const previa = bitacoras.find((b) => b.archivos !== undefined && b.ruta.startsWith(carpeta) && !b.ruta.slice(carpeta.length).includes("/"));
+  if (previa === undefined) {
+    bitacoras.push({ ruta: archivo.ruta, registros, claves, archivos: 1 });
+    return;
+  }
+  previa.registros += registros;
+  previa.claves = [...new Set([...previa.claves, ...claves])];
+  previa.archivos! += 1;
+  if (archivo.ruta > previa.ruta) previa.ruta = archivo.ruta;
 }
 
 export function esConfiguracionMcp(ruta: Ruta): boolean {

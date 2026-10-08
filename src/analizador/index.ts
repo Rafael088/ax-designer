@@ -1,9 +1,9 @@
 // analizar: ruta → Inventario. Describe el repo objetivo sin juzgarlo; puntuar es de la rúbrica.
 import type { Inventario, Lenguaje, PuntoDeEntrada, Ruta, Senal } from "../modelo/index.ts";
-import { esPrueba, leerCodigo } from "./codigo.ts";
+import { esPrueba, leerCodigo, manejadorEnOtroModulo, type DespachoPendiente } from "./codigo.ts";
 import {
   ESTADO_BUSCADO, MCP_BUSCADO, TAREAS_BUSCADAS, clasificarContrato, clasificarEstado, esArchivoDeTareas, esBitacora,
-  esConfiguracionMcp, esSdkMcp, leerBitacora, leerEstado, leerTareas, servidoresMcp,
+  anotarBitacora, esConfiguracionMcp, esSdkMcp, leerEstado, leerTareas, servidoresMcp,
 } from "./datos.ts";
 import { GUIAS_BUSCADAS, leerGuia, tipoDeGuia } from "./guias.ts";
 import { LENGUAJES_CON_SOPORTE, lenguajeDe } from "./lenguajes.ts";
@@ -109,6 +109,7 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
   inventario.mcp.sdk = [...new Set(dependencias.filter(esSdkMcp))];
 
   const entradas = new Set(inventario.puntos_de_entrada.flatMap((p) => p.ruta ?? []));
+  const despachos: DespachoPendiente[] = [];
   const sinSoporte = new Set<Lenguaje>();
   for (const archivo of recorrido.archivos) {
     const lenguaje = lenguajeDe(archivo) ?? lenguajeDeScriptSinExtension(archivo, lector, maxBytes);
@@ -127,6 +128,7 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
     inventario.superficies.mcp_tools.push(...leido.tools);
     if (leido.banderas.length > 0) inventario.superficies.banderas.push({ archivo: archivo.ruta, banderas: leido.banderas });
     inventario.senales.push(...leido.senales);
+    despachos.push(...leido.despachos);
     if (leido.principal && !leido.modulo.es_prueba && !entradas.has(archivo.ruta)) {
       const punto: PuntoDeEntrada = {
         tipo: leido.principal.tipo,
@@ -138,6 +140,14 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
     }
   }
   inventario.limites.lenguajes_sin_soporte = [...sinSoporte].sort();
+  // Segundo paso: los verbos que despachan a una función de otro módulo del repo. Solo se sigue
+  // a un módulo que ya se leyó como código (no a uno que pasó del tope de bytes).
+  for (const { verbo, archivo, funcion } of despachos) {
+    const modulo = inventario.modulos.find((m) => m.ruta === archivo);
+    if (modulo === undefined) continue;
+    const manejador = manejadorEnOtroModulo(archivo, modulo.lenguaje, lector.leer(archivo), funcion);
+    if (manejador !== undefined) verbo.manejador = manejador;
+  }
 
   for (const archivo of recorrido.archivos) {
     const prueba = esPrueba(archivo.ruta);
@@ -155,7 +165,7 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
     }
     if (!prueba && esBitacora(archivo)) {
       const texto = leer(archivo);
-      if (texto !== undefined) inventario.trazabilidad.bitacoras.push(leerBitacora(archivo, texto));
+      if (texto !== undefined) anotarBitacora(inventario.trazabilidad.bitacoras, archivo, texto);
     }
     if (esConfiguracionMcp(archivo.ruta)) {
       const texto = leer(archivo);

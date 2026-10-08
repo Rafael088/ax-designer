@@ -15,7 +15,12 @@ export type CodigoLeido = {
   senales: Senal[];
   /** Tiene shebang o el `if __name__ == "__main__"` de Python. */
   principal: { tipo: "shebang" | "modulo-principal"; linea: number } | undefined;
+  /** Verbos que despachan a una función de otro módulo del repo: `analizar()` les pone el
+   *  `manejador` cuando ya puede leer ese módulo (ver `manejadorEnOtroModulo`). */
+  despachos: DespachoPendiente[];
 };
+
+export type DespachoPendiente = { verbo: VerboCli; archivo: Ruta; funcion: string };
 
 const MAX_TEXTO_SENAL = 160;
 const MAX_SENALES_POR_TIPO = 50;
@@ -48,7 +53,7 @@ export function leerCodigo(ruta: Ruta, lenguaje: Lenguaje, texto: string, existe
     es_prueba: prueba,
   };
   const principal = principalDe(lineas, ruta);
-  if (prueba) return { modulo, verbos: [], api: [], tools: [], banderas: [], senales: [], principal };
+  if (prueba) return { modulo, verbos: [], api: [], tools: [], banderas: [], senales: [], principal, despachos: [] };
 
   const libreria = (patron: RegExp) => modulo.imports.some((i) => patron.test(i));
   // Una ruta con /cli/ o /bin/ no es entrada de verdad si vive bajo un generador o una
@@ -69,8 +74,9 @@ export function leerCodigo(ruta: Ruta, lenguaje: Lenguaje, texto: string, existe
   const conBanderas = verbos.length > 0 || esEntrada || principal !== undefined || parseaArgv;
   const banderas = conBanderas ? [...new Set([...texto.matchAll(/["'`](--[a-z][a-z0-9-]*)/g)].map((m) => m[1]!))].sort() : [];
   if (conBanderas) asignarBanderas(verbos, lineas);
+  const despachos = asignarManejadores(verbos, lineas, lenguaje, importados(ruta, lenguaje, texto, existentes));
   const senales = senalesDe(ruta, lineas, lenguaje, imports, esEntrada || principal !== undefined);
-  return { modulo, verbos, api, tools, banderas, senales, principal };
+  return { modulo, verbos, api, tools, banderas, senales, principal, despachos };
 }
 
 // --- imports ---
@@ -207,7 +213,236 @@ function asignarBanderas(verbos: VerboCli[], lineas: readonly string[]): void {
     const fin = Math.min(siguiente - 1, verbo.linea - 1 + VENTANA_DE_BANDERAS, lineas.length);
     const texto = lineas.slice(verbo.linea - 1, fin).join("\n");
     verbo.banderas = [...new Set([...texto.matchAll(BANDERA)].map((m) => m[1]!))].sort();
+    const requeridas = [...new Set([...texto.matchAll(BANDERA)].filter((m) => esRequerida(texto, m.index!)).map((m) => m[1]!))].sort();
+    if (requeridas.length > 0) verbo.banderas_requeridas = requeridas;
   }
+}
+
+/** Lo que exige una opción al parser: `required=True` (argparse, click, typer), `required: true`
+ *  o `demandOption: true` (yargs y parecidos). */
+const REQUERIDA = /\brequired\s*=\s*True\b|\b(required|demandOption)\s*:\s*true\b/;
+
+/**
+ * Si la bandera que empieza en `inicio` (su comilla) se declara obligatoria: `.requiredOption("--x"`
+ * de commander, o dentro de la misma llamada (de la bandera al paréntesis que la cierra, hasta 400
+ * caracteres) un `required=True`. Con eso el parser aborta solo si falta: el código del verbo no
+ * construye ningún error y aun así se niega (p. ej. `entregar.add_argument("--evidencia",
+ * required=True, ...)`).
+ */
+function esRequerida(texto: string, inicio: number): boolean {
+  if (/\.requiredOption\(\s*$/.test(texto.slice(Math.max(0, inicio - 40), inicio))) return true;
+  let profundidad = 1;
+  let fin = inicio;
+  for (; fin < Math.min(texto.length, inicio + 400) && profundidad > 0; fin++) {
+    const ch = texto[fin];
+    if (ch === "(" || ch === "[" || ch === "{") profundidad++;
+    else if (ch === ")" || ch === "]" || ch === "}") profundidad--;
+  }
+  return REQUERIDA.test(texto.slice(inicio, fin));
+}
+
+/** Una función local de JS/TS: `function nombre(` o `const nombre = (…) =>`, con su sangría. */
+const DEFINICION_DE_FUNCION = /^(\s*)(?:export\s+)?(?:(?:async\s+)?function\s*\*?\s*(\w+)\s*[(<]|(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]*)?=>)/;
+const DEFINICION_PYTHON = /^(\s*)(?:async\s+)?def\s+(\w+)\s*\(/;
+/** Llamadas de una línea, con un calificador opcional: `verboGenerar(`, `estado.main(`. */
+const LLAMADA = /\b((?:\w+\.)?\w+)\s*\(/g;
+/** Cuántos saltos se siguen dentro del módulo del manejador, y hasta cuántas funciones. */
+const SALTOS_LOCALES = 2;
+const MAX_LLAMADAS = 8;
+
+type Rango = { linea: number; hasta: number };
+
+/** Las funciones definidas en el archivo, con su rango: en JS/TS de la definición a la primera `}`
+ *  con su misma sangría; en Python, hasta la última línea más sangrada que el `def`. */
+export function definicionesDe(lineas: readonly string[], lenguaje: Lenguaje): Map<string, Rango> {
+  const definiciones = new Map<string, Rango>();
+  lineas.forEach((l, i) => {
+    if (lenguaje === "python") {
+      const m = DEFINICION_PYTHON.exec(l);
+      if (!m || definiciones.has(m[2]!)) return;
+      let hasta = i + 1;
+      for (let j = i + 1; j < lineas.length; j++) {
+        const t = lineas[j]!;
+        if (t.trim() === "" || t.trim().startsWith("#")) continue;
+        if (/^\s*/.exec(t)![0].length <= m[1]!.length) break;
+        hasta = j + 1;
+      }
+      if (hasta > i + 1) definiciones.set(m[2]!, { linea: i + 1, hasta });
+      return;
+    }
+    const m = DEFINICION_DE_FUNCION.exec(l);
+    const nombre = m?.[2] ?? m?.[3];
+    if (!m || !nombre || definiciones.has(nombre)) return;
+    const cierre = new RegExp(`^${m[1]!}\\}`);
+    for (let j = i + 1; j < lineas.length; j++) {
+      if (cierre.test(lineas[j]!)) {
+        definiciones.set(nombre, { linea: i + 1, hasta: j + 1 });
+        return;
+      }
+    }
+  });
+  return definiciones;
+}
+
+/** Lo que un archivo importa de otros módulos del repo, por el nombre con que lo usa: un módulo
+ *  entero (`from . import estado`, `import * as estado from "./estado.ts"`) o un símbolo de él
+ *  (`from .estado import main`, `import { main } from "./estado.ts"`). */
+type Importado = { archivo: Ruta; simbolo?: string };
+
+function importados(ruta: Ruta, lenguaje: Lenguaje, texto: string, existentes: ReadonlySet<Ruta>): Map<string, Importado> {
+  const nombres = new Map<string, Importado>();
+  const poner = (nombre: string, valor: Importado | undefined) => {
+    if (valor !== undefined && !nombres.has(nombre)) nombres.set(nombre, valor);
+  };
+  const resolver = (especificador: string) => resolverImport(ruta, lenguaje, especificador, existentes);
+  if (lenguaje === "python") {
+    for (const m of texto.matchAll(/^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)/gm)) {
+      const desde = m[1]!;
+      const partes = m[2]!.replace(/#[^\n]*/g, "").replace(/[()\\]/g, "").split(",");
+      for (const parte of partes) {
+        const [nombre, alias] = parte.trim().split(/\s+as\s+/);
+        if (!nombre || !/^\w+$/.test(nombre)) continue;
+        const comoModulo = resolver(desde.endsWith(".") ? desde + nombre : `${desde}.${nombre}`);
+        const desdeArchivo = resolver(desde);
+        poner(alias ?? nombre, comoModulo !== undefined ? { archivo: comoModulo } : desdeArchivo !== undefined ? { archivo: desdeArchivo, simbolo: nombre } : undefined);
+      }
+    }
+    for (const m of texto.matchAll(/^[ \t]*import[ \t]+([^\n#]+)/gm)) {
+      for (const parte of m[1]!.split(",")) {
+        const [nombre, alias] = parte.trim().split(/\s+as\s+/);
+        if (!nombre || (alias === undefined && nombre.includes("."))) continue;
+        const archivo = resolver(nombre);
+        poner(alias ?? nombre, archivo !== undefined ? { archivo } : undefined);
+      }
+    }
+    return nombres;
+  }
+  for (const m of texto.matchAll(/\bimport\s+\*\s+as\s+(\w+)\s+from\s+["']([^"']+)["']/g)) {
+    const archivo = resolver(m[2]!);
+    poner(m[1]!, archivo !== undefined ? { archivo } : undefined);
+  }
+  for (const m of texto.matchAll(/\bimport\s+(?:type\s+)?(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+    const archivo = resolver(m[2]!);
+    if (archivo === undefined) continue;
+    for (const parte of m[1]!.split(",")) {
+      const [nombre, alias] = parte.trim().replace(/^type\s+/, "").split(/\s+as\s+/);
+      if (nombre && /^\w+$/.test(nombre)) poner(alias ?? nombre, { archivo, simbolo: nombre });
+    }
+  }
+  return nombres;
+}
+
+/** Las llamadas de un tramo de líneas, en orden. */
+function llamadasEn(lineas: readonly string[], desde: number, hasta: number): string[] {
+  return lineas.slice(desde - 1, hasta).flatMap((l) => [...l.replace(/#.*$|\/\/.*$/, "").matchAll(LLAMADA)].map((m) => m[1]!));
+}
+
+/**
+ * Las funciones del mismo módulo a las que llama la que va de `rango`, hasta SALTOS_LOCALES saltos
+ * y MAX_LLAMADAS funciones: un manejador que arma el resultado con `resumir()` y lo imprime con
+ * `imprimir()` hace su trabajo ahí, no en sus propias líneas.
+ */
+function alcanceLocal(lineas: readonly string[], definiciones: Map<string, Rango>, rango: Rango): Rango[] {
+  const vistos = new Set<number>([rango.linea]);
+  const alcance: Rango[] = [];
+  let frontera = [rango];
+  for (let salto = 0; salto < SALTOS_LOCALES && alcance.length < MAX_LLAMADAS; salto++) {
+    const siguiente: Rango[] = [];
+    for (const r of frontera) {
+      for (const nombre of llamadasEn(lineas, r.linea + 1, r.hasta)) {
+        const def = definiciones.get(nombre);
+        if (def === undefined || vistos.has(def.linea) || alcance.length >= MAX_LLAMADAS) continue;
+        vistos.add(def.linea);
+        alcance.push(def);
+        siguiente.push(def);
+      }
+    }
+    frontera = siguiente;
+  }
+  return alcance;
+}
+
+function manejadorDe(lineas: readonly string[], definiciones: Map<string, Rango>, rango: Rango): NonNullable<VerboCli["manejador"]> {
+  const llama = alcanceLocal(lineas, definiciones, rango);
+  return llama.length > 0 ? { ...rango, llama } : { ...rango };
+}
+
+/** El manejador de un verbo que despacha a `funcion` de otro módulo, ya leído; undefined si ese
+ *  módulo no la define. Lo usa `analizar()` en un segundo paso, cuando tiene todos los archivos. */
+export function manejadorEnOtroModulo(archivo: Ruta, lenguaje: Lenguaje, texto: string, funcion: string): VerboCli["manejador"] {
+  const lineas = texto.split("\n");
+  const definiciones = definicionesDe(lineas, lenguaje);
+  const rango = definiciones.get(funcion);
+  return rango === undefined ? undefined : { archivo, ...manejadorDe(lineas, definiciones, rango) };
+}
+
+/** Las llamadas con las que un verbo despacha su trabajo, de la preferida a la última opción. */
+function llamadasDeDespacho(verbo: VerboCli, lineas: readonly string[], verbos: readonly VerboCli[]): string[] {
+  if (verbo.via === "switch") {
+    // De las llamadas en la línea del case o en las dos siguientes (hasta otro case o un
+    // break/return), la última: `return conErrores(() => verboGenerar(resto))` despacha a verboGenerar.
+    const llamadas: string[] = [];
+    for (let j = verbo.linea - 1; j < Math.min(lineas.length, verbo.linea + 2); j++) {
+      const texto = j === verbo.linea - 1 ? lineas[j]!.replace(/^.*?\bcase\s+["'][\w-]+["']\s*:/, "") : lineas[j]!;
+      if (j > verbo.linea - 1 && /^\s*(case\b|default\s*:)/.test(texto)) break;
+      llamadas.push(...[...texto.matchAll(LLAMADA)].map((m) => m[1]!));
+      if (/\b(break|return)\b/.test(texto)) break;
+    }
+    return llamadas.reverse();
+  }
+  if (verbo.via === "click" || verbo.via === "typer") {
+    const funcion = funcionSiguiente(lineas, verbo.linea - 1);
+    return funcion === undefined ? [] : [funcion];
+  }
+  if (verbo.via !== "argparse") return [];
+  // argparse: `verbo.set_defaults(funcion=cmd_verbo)` antes del siguiente add_parser…
+  const siguiente = verbos.filter((v) => v.archivo === verbo.archivo && v.linea > verbo.linea).reduce((a, v) => Math.min(a, v.linea), Number.POSITIVE_INFINITY);
+  const fin = Math.min(siguiente - 1, verbo.linea - 1 + VENTANA_DE_BANDERAS, lineas.length);
+  const porDefecto = lineas.slice(verbo.linea - 1, fin).join("\n").match(/\.set_defaults\(([^)]*)\)/)?.[1];
+  if (porDefecto !== undefined) return [...porDefecto.matchAll(/\w+\s*=\s*((?:\w+\.)?\w+)/g)].map((m) => m[1]!);
+  // …o, sin set_defaults, un `if` que compara con el nombre del verbo y despacha en su cuerpo
+  // (p. ej. `if argumentos[:1] in (["--estado"], ["estado"]):` y debajo `return estado.main()`).
+  const literal = new RegExp(`^\\s*(?:el)?if\\b[^#]*(?:==|\\bin\\b)[^#]*["']${verbo.nombre.replace(/[-]/g, "\\-")}["']|^\\s*(?:el)?if\\b[^#]*["']${verbo.nombre.replace(/[-]/g, "\\-")}["'][^#]*(?:==|\\bin\\b)`);
+  const i = lineas.findIndex((l) => literal.test(l));
+  if (i < 0) return [];
+  // El cuerpo va en la línea siguiente si el `if` acaba en «:»; si no, tras los «:» del `if` en
+  // la misma línea (`if c == "x": return f()`), que no son los de un subíndice como `[:1]`.
+  const condicion = lineas[i]!.replace(/#.*$/, "").trimEnd();
+  const tras = condicion.endsWith(":") ? undefined : /:\s*((?:return\s+)?[\w.]+\s*\(.*)$/.exec(condicion)?.[1];
+  const cuerpo = tras ?? lineas.slice(i + 1).find((l) => l.trim() !== "" && !l.trim().startsWith("#")) ?? "";
+  return [...cuerpo.matchAll(LLAMADA)].map((m) => m[1]!).reverse();
+}
+
+/**
+ * Un verbo de CLI casi nunca hace el trabajo donde se declara: un `case "verbo":` llama a una
+ * función (`return conErrores(() => verboGenerar(resto))`) que vive más abajo, un `add_parser`
+ * de argparse la nombra en `set_defaults(funcion=cmd_verbo)` o un `if` del main despacha con
+ * `return estado.main()` a otro módulo. Mirar una ventana tras la declaración no ve lo que esa
+ * función devuelve (un hallazgo de axd sobre sí mismo y sobre otros repos auditados).
+ * Así que a cada verbo se le anota su `manejador`: la función a la que despacha, de su inicio a su
+ * fin, más las funciones de ese mismo módulo a las que llama (`llama`, hasta dos saltos). Si la
+ * función es de otro módulo del repo (importado), queda pendiente para `analizar()`.
+ */
+function asignarManejadores(verbos: VerboCli[], lineas: readonly string[], lenguaje: Lenguaje, nombres: Map<string, Importado>): DespachoPendiente[] {
+  const definiciones = definicionesDe(lineas, lenguaje);
+  const pendientes: DespachoPendiente[] = [];
+  for (const verbo of verbos) {
+    for (const llamada of llamadasDeDespacho(verbo, lineas, verbos)) {
+      const [primero, segundo] = llamada.split(".");
+      const local = segundo === undefined ? definiciones.get(primero!) : undefined;
+      if (local !== undefined) {
+        verbo.manejador = manejadorDe(lineas, definiciones, local);
+        break;
+      }
+      const importado = nombres.get(primero!);
+      if (importado === undefined) continue;
+      const funcion = segundo === undefined ? importado.simbolo : importado.simbolo === undefined ? segundo : undefined;
+      if (funcion === undefined) continue;
+      pendientes.push({ verbo, archivo: importado.archivo, funcion });
+      break;
+    }
+  }
+  return pendientes;
 }
 
 function funcionSiguiente(lineas: readonly string[], desde: number): string | undefined {
@@ -263,6 +498,8 @@ type Patron = { tipo: TipoDeSenal; patron: RegExp; soloEntrada?: boolean };
 const PATRONES: Patron[] = [
   { tipo: "serializa-json", patron: /JSON\.stringify\(|\bjson\.dumps?\(|application\/json|["']--json["']|--format(?:o)?[= ]json|\bres\.json\(|\bjsonify\(/ },
   { tipo: "clave-de-esquema", patron: /["']?\b(esquema|schema_?version|schemaVersion|format_?version|formatVersion)\b["']?\s*[:=]|["']\$schema["']\s*:/ },
+  // Por subíndice: `datos["esquema"] = ESQUEMA` (p. ej. en un estado.py de Python), no una comparación.
+  { tipo: "clave-de-esquema", patron: /\[\s*["'](esquema|schema_?version|schemaVersion|format_?version|formatVersion|\$schema)["']\s*\]\s*=(?!=)/ },
   { tipo: "escribe-archivo", patron: /\b(writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\(|\.write_(text|bytes)\(|\bopen\([^)]*["'][wax]b?\+?["']/ },
   { tipo: "reemplazo-atomico", patron: /\b(renameSync|rename)\(|\bos\.(replace|rename)\(|\.replace\(\s*[\w.]+\s*\)\s*$|write-file-atomic|atomicwrites/ },
   { tipo: "transaccion", patron: /\bBEGIN(\s+(IMMEDIATE|EXCLUSIVE|TRANSACTION))?\b|\bCOMMIT\b|\.transaction\(|\.commit\(\)/ },

@@ -14,6 +14,15 @@ salida son:
 | `4` | El destino cambió desde el ensayo: vuelve a ensayar. No escribe nada en este caso. |
 | `5` | Hace falta una persona: el contrato tiene verbos que axd no sabe implementar, o `ax/` tiene archivos que no generó axd. |
 
+## 0. El resumen: `estado`
+
+```sh
+axd estado ./mi-repo      # < 1k tokens: puntuación por eje, críticos, lo generado en ax/, corridas y siguiente paso
+```
+
+Es el primer verbo para un agente que llega a un repo: solo lee, devuelve JSON con `"esquema": 1`
+y en `salida` el siguiente paso concreto. El detalle está en `auditar`.
+
 ## 1. Entrarse del repo: `analizar` y `medir`
 
 ```sh

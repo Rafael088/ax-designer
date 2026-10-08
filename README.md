@@ -19,6 +19,7 @@ escribe ni gasta sin `--aplicar` o `--correr`**: lo que escribe o gastaría se e
 
 | Verbo | Para qué |
 | --- | --- |
+| `axd estado <repo>` | El resumen barato (< 1k tokens, JSON con esquema): puntuación por eje, críticos pendientes, si lo generado en `ax/` está al día con el contrato, las corridas guardadas y el siguiente paso. No escribe ni gasta. |
 | `axd analizar <repo>` | El Inventario en JSON: qué hay, qué se lee al entrar, dónde está el estado. No escribe ni gasta. |
 | `axd medir <repo>` | El costo de descubrimiento, camino por camino: cuántos tokens cuesta enterarse por cada vía. |
 | `axd auditar <repo>` | El informe por los 7 ejes de la rúbrica AX, con puntuación, nivel y hallazgos ordenados por lo que ahorran. |
@@ -27,6 +28,7 @@ escribe ni gasta sin `--aplicar` o `--correr`**: lo que escribe o gastaría se e
 | `axd validar <repo> --tareas <archivo>` | Sin `--correr`, el plan de corridas (cada tarea, sin y con lo generado) y su costo estimado. Con `--correr` las ejecuta con un agente real y compara rondas, tokens y costo. |
 
 ```sh
+axd estado ../mi-repo                        # cómo está, en poco, y qué toca después
 axd auditar ../mi-repo --formato md          # qué le cuesta a un agente enterarse
 axd generar cli ../mi-repo                   # ensayo: qué crearía y por qué
 axd generar cli ../mi-repo --aplicar         # ax/contrato.json + ax/cli.mjs

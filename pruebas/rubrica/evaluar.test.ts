@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { analizar, lectorDeDisco } from "../../src/analizador/index.ts";
+import { analizar, lectorDeDisco, lectorEnMemoria } from "../../src/analizador/index.ts";
 import { medir } from "../../src/medicion/index.ts";
 import { generarInforme } from "../../src/informe/index.ts";
 import { evaluarRubrica } from "../../src/rubrica/index.ts";
@@ -33,6 +33,60 @@ const generadorEnCarpetaCli = cargar("generador-en-carpeta-cli");
 function porId(criterios: CriterioDecidido[]): Record<string, CriterioDecidido> {
   return Object.fromEntries(criterios.map((c) => [c.id, c]));
 }
+
+// --- Verbos de switch que despachan a una función lejana ---
+
+// El patrón de axd: el case solo llama a su manejador, que vive a más de 20 líneas y arma un
+// objeto con esquema y salida; un único imprimir() lo serializa. Antes la rúbrica miraba 20
+// líneas tras el case y no veía nada: resumen sin formato de máquina ni esquema, y
+// devuelve-estado-nuevo en 0 aunque todos los verbos devuelven su estado.
+function despachoLejano(): { inventario: Inventario; medicion: Medicion } {
+  const relleno = Array.from({ length: 30 }, (_, i) => `// relleno ${i}`).join("\n");
+  const cli = [
+    "#!/usr/bin/env node",
+    "function manejar(argv) {",
+    "  switch (argv[0]) {",
+    '    case "estado":',
+    "      return conErrores(() => verboEstado(argv));",
+    '    case "generar":',
+    "      return conErrores(() => verboGenerar(argv));",
+    "  }",
+    "}",
+    relleno,
+    "function conErrores(f) {",
+    "  return f();",
+    "}",
+    relleno,
+    "function verboEstado(argv) {",
+    "  return { esquema: 1, tareas: 3 };",
+    "}",
+    relleno,
+    "function verboGenerar(argv) {",
+    "  const escritos = [];",
+    '  return { esquema: 1, escritos, salida: "Escrito." };',
+    "}",
+    "function imprimir(r) {",
+    "  process.stdout.write(JSON.stringify(r));",
+    "}",
+  ].join("\n");
+  const guia = "# Agentes\n\n`cli estado` da el resumen. Las claves se agregan, no se renombran.\n";
+  const inventario = analizar(lectorEnMemoria({ "bin/cli.js": cli, "AGENTS.md": guia }));
+  return { inventario, medicion: medir(inventario) };
+}
+
+test("lectura-barata: un resumen que despacha a un manejador lejano sale en JSON y versionado", () => {
+  const { inventario, medicion } = despachoLejano();
+  const c = porId(evaluarLecturaBarata(inventario, medicion));
+  assert.equal(c["lectura-barata/resumen-existe"]!.resultado, "cumple");
+  assert.equal(c["lectura-barata/formato-de-maquina"]!.resultado, "cumple", c["lectura-barata/formato-de-maquina"]!.motivo);
+  assert.equal(c["lectura-barata/esquema-versionado"]!.resultado, "cumple", c["lectura-barata/esquema-versionado"]!.motivo);
+});
+
+test("verbos-estrechos: devuelve-estado-nuevo mira el manejador del case, no 20 líneas tras él", () => {
+  const { inventario } = despachoLejano();
+  const c = porId(evaluarVerbosEstrechos(inventario));
+  assert.equal(c["verbos-estrechos/devuelve-estado-nuevo"]!.resultado, "cumple", c["verbos-estrechos/devuelve-estado-nuevo"]!.motivo);
+});
 
 // --- 1. Lectura barata ---
 

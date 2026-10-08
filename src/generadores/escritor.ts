@@ -72,7 +72,10 @@ function lineaDeCabecera(comentario: Comentario, contrato: string, contenido: st
 /** Dónde va la cabecera: tras el shebang, tras la `{` de un JSON, o en la primera línea. */
 function posicionDeCabecera(comentario: Comentario, lineas: readonly string[]): number {
   if (comentario === "json") {
-    if (lineas[0] !== "{" || lineas.length < 3) throw new Error("Un JSON generado tiene que empezar con «{» en su propia línea y tener al menos una clave.");
+    if (lineas[0] !== "{" || lineas.length < 3) throw new ErrorAx("Un JSON generado tiene que empezar con «{» en su propia línea y tener al menos una clave.", {
+      codigo: 3,
+      salida: "Es un fallo de la plantilla de axd: repórtalo con este mensaje y el archivo que se iba a generar.",
+    });
     return 1;
   }
   return lineas[0]?.startsWith("#!") ? 1 : 0;

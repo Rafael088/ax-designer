@@ -82,3 +82,49 @@ test("dos add_parser seguidos, cada uno en su propia línea, no se duplican ni s
   assert.deepEqual(verbos.map((v) => v.nombre), ["a", "b"]);
   assert.deepEqual(verbos.map((v) => v.linea), [1, 2]);
 });
+
+// Hallazgo de axd sobre sí mismo: el case solo despacha
+// (`return conErrores(() => verboGenerar(resto))`) y lo que el verbo devuelve vive en una función
+// más abajo, lejos de la ventana de 20 líneas. El verbo de switch lleva su manejador.
+test("un verbo de switch apunta a la función local a la que despacha, de su inicio a su }", () => {
+  const relleno = Array.from({ length: 25 }, (_, i) => `// relleno ${i}`).join("\n");
+  const codigo = [
+    "#!/usr/bin/env node",
+    "function main(argv) {",
+    "  switch (argv[0]) {",
+    '    case "generar":',
+    "      return conErrores(() => verboGenerar(argv));",
+    '    case "ver": return verboVer();',
+    '    case "suelto":',
+    "      break;",
+    '    case "ajeno":',
+    "      return fs.readFileSync(argv[1]);",
+    "  }",
+    "}",
+    relleno,
+    "function conErrores(f) {",
+    "  return f();",
+    "}",
+    "function verboGenerar(argv) {",
+    "  if (argv) {",
+    "    return 1;",
+    "  }",
+    "  return { esquema: 1, salida: \"hecho\" };",
+    "}",
+    "const verboVer = () => {",
+    "  return 2;",
+    "};",
+  ].join("\n");
+  const verbos = leerCodigo("bin/cli.ts", "typescript", codigo, new Set(), true).verbos;
+  const lineas = codigo.split("\n");
+  const de = (nombre: string) => verbos.find((v) => v.nombre === nombre)!.manejador;
+  const generar = de("generar")!;
+  assert.equal(lineas[generar.linea - 1], "function verboGenerar(argv) {");
+  assert.equal(lineas[generar.hasta - 1], "}");
+  assert.equal(generar.hasta - generar.linea, 5);
+  const ver = de("ver")!;
+  assert.equal(lineas[ver.linea - 1], "const verboVer = () => {");
+  assert.equal(lineas[ver.hasta - 1], "};");
+  assert.equal(de("suelto"), undefined, "un case sin llamada no tiene manejador");
+  assert.equal(de("ajeno"), undefined, "una llamada sin definición en el archivo no es manejador");
+});

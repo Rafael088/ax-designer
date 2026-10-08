@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { analizar, leerEntrada, lectorDeDisco, lectorSinOcultos } from "../analizador/index.ts";
 import { generarContrato } from "../contrato/index.ts";
+import { estadoDe } from "../estado/index.ts";
 import { GENERADORES, esGeneradoPorAxd, generar, type Generador } from "../generadores/index.ts";
 import { generarInforme, renderizarMarkdown } from "../informe/index.ts";
 import { medir } from "../medicion/index.ts";
@@ -11,9 +12,10 @@ import { correrValidacion, ensayarValidacion, leerPrecios, leerTareas, validarRe
 import { MOTORES, verificador } from "../validador/motores/index.ts";
 
 // Sincronizada con package.json; pruebas/cli.test.ts comprueba que no se separe.
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const VERBOS = [
+  { verbo: "estado [repo]", descripcion: "El resumen barato (< 1k tokens): puntuación por eje, críticos pendientes, si lo generado en ax/ está al día con el contrato, las corridas y el siguiente paso. No escribe ni gasta." },
   { verbo: "analizar [repo]", descripcion: "El Inventario en JSON. No escribe ni gasta." },
   { verbo: "medir [repo]", descripcion: "El costo de descubrimiento, camino por camino." },
   { verbo: "auditar [repo] [--formato json|md]", descripcion: "El informe por los 7 ejes con puntuación." },
@@ -35,6 +37,8 @@ export function manejar(argv: readonly string[]): Resultado {
     return { codigo: 0, cuerpo: { esquema: 1, nombre: "axd", version: VERSION } };
   }
   switch (primero) {
+    case "estado":
+      return conErrores(() => verboEstado(resto));
     case "analizar":
       return conErrores(() => verboAnalizar(resto));
     case "medir":
@@ -50,6 +54,17 @@ export function manejar(argv: readonly string[]): Resultado {
     default:
       return usoIncorrecto(`Verbo o bandera desconocida: «${primero}».`);
   }
+}
+
+/** El camino barato: lo que diría auditar, contrato y lo que hay en ax/ y .ax-corridas/, en poco. */
+function verboEstado(argv: readonly string[]): Resultado {
+  const ruta = unaRuta("estado", argv);
+  if (typeof ruta !== "string") return ruta;
+  const lector = lectorDeDisco(ruta);
+  const inventario = analizar(lector);
+  const informe = generarInforme(inventario.raiz, evaluarRubrica(inventario, medir(inventario)));
+  const estado = estadoDe(lector, informe, contratoDe(ruta));
+  return { codigo: 0, cuerpo: { esquema: 1, ...estado } };
 }
 
 function verboAnalizar(argv: readonly string[]): Resultado {

@@ -3,16 +3,16 @@
 // ya encontró el analizador (CLI, API, MCP); como el Inventario no distingue lectura de
 // escritura, se aproxima por nombre (CLI/MCP) o por método HTTP (API): una lista corta y
 // documentada en el propio código, no un juicio nuevo sobre el repo.
-import type { CriterioDecidido, Inventario, Ruta } from "../modelo/index.ts";
+import type { CriterioDecidido, Inventario, Manejador, Ruta } from "../modelo/index.ts";
 import {
-  criterioJson, cumple, evidenciaArchivo, evidenciaAusencia, haySenalCerca, noAplica, noCumple, parcial, porMetrica, proporcion,
+  criterioJson, cumple, evidenciaArchivo, evidenciaAusencia, haySenalEnElVerbo, noAplica, noCumple, parcial, porMetrica, proporcion,
 } from "./comun.ts";
 
 const EJE = "verbos-estrechos";
 export const VERBOS_DE_LECTURA = /^(estado|status|resumen|contexto|summary|listar|list|ver|show|get|buscar|search|leer|read|mostrar)$/i;
 export const VERBOS_DE_CIERRE = /^(aprobar|approve|finalizar|finalize|hecho|done|merge|publish|publicar|cerrar|close|integrar)[-_]?/i;
 
-type VerboUnificado = { nombre: string; archivo: Ruta; linea: number; escritura: boolean };
+type VerboUnificado = { nombre: string; archivo: Ruta; linea: number; escritura: boolean; manejador?: Manejador | undefined };
 
 function ultimoSegmento(ruta: string): string {
   return ruta.split("/").filter(Boolean).pop() ?? ruta;
@@ -20,7 +20,7 @@ function ultimoSegmento(ruta: string): string {
 
 function todosLosVerbos(inventario: Inventario): VerboUnificado[] {
   return [
-    ...inventario.superficies.cli.map((v) => ({ nombre: v.nombre, archivo: v.archivo, linea: v.linea, escritura: !VERBOS_DE_LECTURA.test(v.nombre) })),
+    ...inventario.superficies.cli.map((v) => ({ nombre: v.nombre, archivo: v.archivo, linea: v.linea, escritura: !VERBOS_DE_LECTURA.test(v.nombre), manejador: v.manejador })),
     ...inventario.superficies.api.map((r) => ({ nombre: ultimoSegmento(r.ruta), archivo: r.archivo, linea: r.linea, escritura: r.metodo !== "get" })),
     ...inventario.superficies.mcp_tools.map((t) => ({ nombre: t.nombre, archivo: t.archivo, linea: t.linea, escritura: !VERBOS_DE_LECTURA.test(t.nombre) })),
   ];
@@ -83,7 +83,7 @@ function devuelveEstadoNuevo(inventario: Inventario, verbos: VerboUnificado[]): 
   const c = criterioJson(EJE, "devuelve-estado-nuevo");
   const escritura = verbos.filter((v) => v.escritura);
   if (escritura.length === 0) return noAplica(c, "No hay verbos de escritura.");
-  const conSalida = escritura.filter((v) => haySenalCerca(inventario, v.archivo, v.linea, ["serializa-json", "campo-de-salida"]) !== undefined);
+  const conSalida = escritura.filter((v) => haySenalEnElVerbo(inventario, v, ["serializa-json", "campo-de-salida"]) !== undefined);
   const prop = proporcion(conSalida.length, escritura.length)!;
   const ev = conSalida.slice(0, 2).map((v) => evidenciaArchivo(v.archivo, v.linea));
   return porMetrica(c, prop, ev);
