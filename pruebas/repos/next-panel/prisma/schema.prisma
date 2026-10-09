@@ -1,0 +1,42 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Producto {
+  id     Int          @id @default(autoincrement())
+  nombre String
+  precio Int
+  activo Boolean      @default(true)
+  items  PedidoItem[]
+}
+
+model Pedido {
+  id    Int          @id @default(autoincrement())
+  fecha DateTime
+  total Int
+  items PedidoItem[]
+}
+
+model PedidoItem {
+  id         Int      @id @default(autoincrement())
+  pedidoId   Int
+  productoId Int
+  cantidad   Int
+  pedido     Pedido   @relation(fields: [pedidoId], references: [id])
+  producto   Producto @relation(fields: [productoId], references: [id])
+}
+
+model Gasto {
+  id        Int      @id @default(autoincrement())
+  fecha     DateTime
+  categoria String
+  monto     Int
+}
+
+model Factura {
+  id          Int      @id @default(autoincrement())
+  monto       Int
+  vence       DateTime
+  pagada      Boolean  @default(false)
+}

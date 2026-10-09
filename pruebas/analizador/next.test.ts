@@ -45,11 +45,11 @@ test("App Router: los parámetros de consulta del GET y el cuerpo del esquema zo
   assert.equal(crear.cuerpo?.nombre, "esquemaProducto");
   assert.deepEqual(crear.cuerpo?.desde, { archivo: "src/app/api/productos/route.ts", linea: 6 });
   assert.deepEqual(crear.cuerpo?.campos, [
-    { nombre: "nombre", tipo: "texto", requerido: true },
-    { nombre: "precio", tipo: "numero", requerido: true },
+    { nombre: "nombre", tipo: "texto", requerido: true, minimo: 2 },
+    { nombre: "precio", tipo: "numero", requerido: true, minimo: 0 },
     { nombre: "stock", tipo: "entero", requerido: false },
     { nombre: "etiquetas", tipo: "lista", requerido: true },
-    { nombre: "categoriaId", tipo: "entero", requerido: true },
+    { nombre: "categoriaId", tipo: "entero", requerido: true, minimo: 1 },
   ]);
   const parche = nextPrisma.superficies.api.find((r) => r.metodo === "patch")!;
   assert.ok(parche.cuerpo!.campos.every((c) => !c.requerido), "un esquema .partial() no exige nada");
@@ -85,10 +85,10 @@ test("esquemasZod: campos de primer nivel, comentarios y comas dentro de llamada
     "});",
   ].join("\n"));
   assert.deepEqual(esquemas.get("a")?.campos, [
-    { nombre: "nombre", tipo: "texto", requerido: true },
+    { nombre: "nombre", tipo: "texto", requerido: true, minimo: 2 },
     { nombre: "email", tipo: "texto", requerido: false },
-    { nombre: "items", tipo: "lista", requerido: true },
-    { nombre: "activo", tipo: "booleano", requerido: false },
+    { nombre: "items", tipo: "lista", requerido: true, minimo: 1 },
+    { nombre: "activo", tipo: "booleano", requerido: false, por_defecto: true },
     { nombre: "hijo", tipo: "otro", requerido: true },
   ]);
 });

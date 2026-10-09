@@ -12,6 +12,15 @@ export type Variante = "sin" | "con";
 
 export const VARIANTES: readonly Variante[] = ["sin", "con"];
 
+/**
+ * Qué lleva la copia «con»: `cli`, solo el CLI generado y una línea en la guía que el agente carga
+ * sola que apunta a ax/cli.md; `mcp`, el CLI y el MCP que lo envuelve, sin esa línea; `ambos` (por
+ * defecto), el CLI, el MCP y la línea.
+ */
+export type ModoCon = "cli" | "mcp" | "ambos";
+
+export const MODOS_CON: readonly ModoCon[] = ["cli", "mcp", "ambos"];
+
 /** Cómo se sabe, sin preguntarle a un agente, que la tarea quedó hecha. */
 export type CriterioDeTerminado =
   /** Un comando en la raíz de la copia; terminó si sale con `codigo` (0 si se omite). */
@@ -99,6 +108,8 @@ export type PlanDeCorridas = {
   modelo: string;
   repeticiones: number;
   contrato: string;
+  /** Qué lleva la copia «con». */
+  con: ModoCon;
   corridas: CorridaPlaneada[];
   total: {
     corridas: number;
@@ -137,8 +148,10 @@ export type SalidaDelMotor =
       motivo: string;
       respuesta: string;
       duracion_ms: number;
+      /** Lo que imprimió el motor, paso a paso (el stream-json de claude), para guardarlo con la corrida. */
+      transcripcion?: string;
     }
-  | { ok: false; error: string; detalle: string };
+  | { ok: false; error: string; detalle: string; transcripcion?: string };
 
 export type ResultadoDeCorrida = CorridaPlaneada & (
   | {
@@ -153,8 +166,10 @@ export type ResultadoDeCorrida = CorridaPlaneada & (
       termino: boolean;
       comprobacion: string;
       duracion_ms: number;
+      /** Dónde quedó la transcripción de la corrida, relativa a la raíz del repo. Solo si el motor la dio. */
+      transcripcion?: Ruta;
     }
-  | { estado: "fallo-motor"; error: string; detalle: string }
+  | { estado: "fallo-motor"; error: string; detalle: string; transcripcion?: Ruta }
 );
 
 /** Resumen de una variante de una tarea sobre sus repeticiones válidas. Medianas. */

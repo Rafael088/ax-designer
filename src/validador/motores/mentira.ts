@@ -38,6 +38,7 @@ export function motorDeMentira(opciones: OpcionesDeMentira = {}): Motor & { pedi
   const pedidos: PedidoDeCorrida[] = [];
   return {
     nombre: "mentira",
+    guia: "CLAUDE.md",
     pedidos,
     disponible: () => opciones.noDisponible ?? null,
     prepararCon: (copia) => opciones.prepararCon?.(copia),

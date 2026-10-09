@@ -5,4 +5,4 @@ export type * from "./informe.ts";
 export { ErrorAx, type CodigoDeError } from "./error.ts";
 export type * from "./contrato.ts";
 export type * from "./validacion.ts";
-export { VARIANTES } from "./validacion.ts";
+export { MODOS_CON, VARIANTES } from "./validacion.ts";

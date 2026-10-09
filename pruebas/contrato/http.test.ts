@@ -62,7 +62,7 @@ test("next-prisma: el cuerpo sale del esquema zod; sin él, del modelo de Prisma
     return impl.tipo === "http" ? impl.cuerpo?.forma : undefined;
   };
   assert.equal(forma("crear-productos")?.origen, "zod");
-  assert.match(verbo(nextPrisma, "crear-productos").entradas[0]!.descripcion, /nombre \(texto, requerido\).*esquemaProducto.*route\.ts:6/);
+  assert.match(verbo(nextPrisma, "crear-productos").entradas[0]!.descripcion, /nombre \(texto, requerido, mínimo 2 caracteres\).*esquemaProducto.*route\.ts:6/);
   assert.deepEqual(forma("crear-ordenes"), {
     origen: "prisma",
     nombre: "Orden",

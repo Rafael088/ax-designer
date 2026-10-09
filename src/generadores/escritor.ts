@@ -322,8 +322,20 @@ export const CARPETA_DE_CORRIDAS = ".ax-corridas";
 
 /** Escribe `.ax-corridas/<nombre>.json` en el repo objetivo; si ya existe, sale con 4 sin pisarlo. */
 export function escribirCorrida(raiz: string, nombre: string, contenido: string): Escrito {
+  return escribirEnCorridas(raiz, `${nombre}.json`, contenido);
+}
+
+/**
+ * Escribe la transcripción de una corrida (lo que imprimió el motor, p. ej. el stream-json de
+ * claude) en `.ax-corridas/<nombre>/<corrida>.jsonl`, junto al resultado de la validación.
+ */
+export function escribirTranscripcion(raiz: string, nombre: string, corrida: string, contenido: string): Escrito {
+  return escribirEnCorridas(raiz, `${nombre}/${corrida.replace(/[^\w.-]+/g, "-")}.jsonl`, contenido);
+}
+
+function escribirEnCorridas(raiz: string, dentro: string, contenido: string): Escrito {
   const absoluta = comprobarRaiz(raiz);
-  const ruta = `${CARPETA_DE_CORRIDAS}/${nombre}.json`;
+  const ruta = `${CARPETA_DE_CORRIDAS}/${dentro}`;
   comprobarRuta(ruta);
   if (!caminoSeguro(absoluta, ruta)) {
     throw new ErrorAx(`${CARPETA_DE_CORRIDAS} existe y no es una carpeta: no se escribe ahí.`, { codigo: 5, salida: `Una persona tiene que mover o borrar ${CARPETA_DE_CORRIDAS} y volver a correr.` });
@@ -337,4 +349,29 @@ export function escribirCorrida(raiz: string, nombre: string, contenido: string)
     throw e;
   }
   return { ruta, accion: "crear", bytes: Buffer.byteLength(contenido, "utf8"), sha256: sha256(contenido) };
+}
+
+/**
+ * Añade `linea` al final de la guía `guia` de una copia del validador (la crea si no existe), para
+ * que el agente la cargue solo al entrar. Si ya la tiene, no hace nada. Solo en copias temporales
+ * del validador: el repo objetivo nunca se toca.
+ */
+export function anexarALaGuia(copia: string, guia: Ruta, linea: string): void {
+  const absoluta = resolve(copia);
+  const dentro = relative(resolve(tmpdir()), absoluta);
+  if (dentro.startsWith("..") || !dentro.split(sep)[0]!.startsWith(PREFIJO_TEMPORAL)) {
+    throw new ErrorAx(`«${copia}» no es una copia del validador: la guía no se toca.`, { codigo: 3, salida: "Es un fallo de axd: repórtalo con este mensaje." });
+  }
+  comprobarRuta(guia);
+  const destino = join(absoluta, guia);
+  let actual = "";
+  try {
+    actual = readFileSync(destino, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    actual = "";
+  }
+  if (actual.includes(linea)) return;
+  mkdirSync(dirname(destino), { recursive: true });
+  writeFileSync(destino, actual === "" ? `${linea}\n` : `${actual.replace(/\n*$/, "")}\n\n${linea}\n`, "utf8");
 }

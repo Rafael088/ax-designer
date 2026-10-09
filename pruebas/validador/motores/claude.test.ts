@@ -38,10 +38,11 @@ function pedido(variante: "sin" | "con"): PedidoDeCorrida {
   };
 }
 
-test("el argv del «sin»: -p con el enunciado como un solo argumento, JSON, topes y sin ningún MCP", () => {
+test("el argv del «sin»: -p con el enunciado como un solo argumento, stream-json, topes y sin ningún MCP", () => {
   assert.deepEqual(argvDeClaude(pedido("sin")), [
     "-p", "¿Cuál es el título de t-1? --no-es-una-bandera",
-    "--output-format", "json",
+    "--output-format", "stream-json",
+    "--verbose",
     "--model", "sonnet",
     "--max-turns", "10",
     "--max-budget-usd", "0.5",
@@ -69,7 +70,40 @@ test("correr lanza claude en la copia con el tope de tiempo, escribe la config d
   assert.deepEqual(salida, {
     ok: true, rondas: 4, usd: 0.0567, acabo: true, motivo: "success", respuesta: "Medir", duracion_ms: 1234,
     uso: { entrada: 10, salida: 300, escritura_cache: 15000, lectura_cache: 40000 },
+    transcripcion: RESULTADO,
   });
+});
+
+// Una salida grabada de `claude -p --output-format stream-json --verbose` (la tarea «ventas de la
+// semana» sobre el restaurante de la demo, recortada y sin rutas ni ids de sesión).
+const GRABADA = readFileSync(join(import.meta.dirname, "..", "fixtures", "claude-stream-json.jsonl"), "utf8");
+
+test("stream-json: el uso, el costo y la respuesta salen del evento result, y la transcripción entera vuelve tal cual", () => {
+  const salida = leerSalidaDeClaude(GRABADA, "", 0, null);
+  assert.ok(salida.ok);
+  assert.equal(salida.rondas, 9);
+  assert.equal(salida.usd, 0.18016880000000002);
+  assert.deepEqual(salida.uso, { entrada: 18, salida: 2103, escritura_cache: 26832, lectura_cache: 258874 });
+  assert.equal(salida.acabo, true);
+  assert.match(salida.respuesta, /Bandeja paisa/);
+  assert.equal(salida.duracion_ms, 24328);
+  assert.equal(salida.transcripcion, GRABADA, "la transcripción es lo que imprimió claude, sin tocar");
+  const eventos = GRABADA.trim().split("\n").map((l) => JSON.parse(l) as { type: string });
+  assert.equal(eventos[0]!.type, "system");
+  assert.equal(eventos.at(-1)!.type, "result");
+});
+
+test("stream-json: un evento después del result o líneas que no son JSON no confunden; sin result es fallo del motor con la transcripción", () => {
+  const conRuido = `aviso: algo por stdout\n${GRABADA}{"type":"system","subtype":"fin"}\n`;
+  const bien = leerSalidaDeClaude(conRuido, "", 0, null);
+  assert.ok(bien.ok && bien.rondas === 9);
+  const cortada = GRABADA.split("\n").slice(0, 5).join("\n") + "\n";
+  const mal = leerSalidaDeClaude(cortada, "se acabó el tiempo", null, "pasó el tope de 300 s");
+  assert.ok(!mal.ok);
+  assert.match(mal.error, /evento de resultado/);
+  assert.equal(mal.transcripcion, cortada, "lo que alcanzó a imprimir se guarda igual");
+  const tope = leerSalidaDeClaude(cortada + JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 10, usage: {} }) + "\n", "", 1, null);
+  assert.ok(tope.ok && !tope.acabo && tope.motivo === "error_max_turns" && tope.rondas === 10);
 });
 
 test("leer la salida: tope de rondas no es acabar, y sin JSON de resultado es un fallo del motor", () => {
@@ -91,6 +125,7 @@ test("disponible: sin claude en el PATH dice cómo instalarlo y que existe --mot
   const sinNpm = motorClaude({ lanzador: lanzar, buscar: (p) => (p === "npm" ? null : `/bin/${p}`) }).disponible({ con: true });
   assert.match(sinNpm!.error, /npm/);
   assert.equal(motorClaude({ lanzador: lanzar, buscar: (p) => `/bin/${p}` }).disponible({ con: true }), null);
+  assert.equal(motorClaude({ lanzador: lanzar, buscar: (p) => (p === "npm" ? null : `/bin/${p}`) }).disponible({ con: true, mcp: false }), null, "solo con el CLI no hace falta npm");
   assert.equal(llamadas.length, 0);
 });
 
