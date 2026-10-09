@@ -47,7 +47,7 @@ export function listar() {
     name: h.nombre,
     description: h.descripcion,
     inputSchema: h.esquema,
-    annotations: { readOnlyHint: h.tipo === "lectura", destructiveHint: false, idempotentHint: h.tipo === "lectura", openWorldHint: false },
+    annotations: { readOnlyHint: h.tipo === "lectura", destructiveHint: false, idempotentHint: h.tipo === "lectura", openWorldHint: h.abierta === true },
   }));
 }
 

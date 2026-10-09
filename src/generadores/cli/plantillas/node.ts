@@ -12,8 +12,9 @@ const CABEZA = String.raw`#!/usr/bin/env node
 // estado del dominio. JSON por stdout con "esquema": 1, también los errores (error, salida,
 // reintentable). Códigos: 0 bien, 2 uso, 3 error, 4 el estado cambió desde la huella, 5 hace
 // falta una persona. Las escrituras son un ensayo hasta --aplicar; con --huella salen con 4 si el
-// estado cambió desde esa lectura. Las transiciones vedadas no son verbos.
-// Sin dependencias: solo node:*. Para cambiarlo, cambia el contrato y vuelve a generar.
+// estado cambió desde esa lectura. Las transiciones vedadas no son verbos. Los verbos HTTP llaman a
+// la API del repo en la URL base del contrato (http.base_url: su variable de entorno o el valor por
+// defecto). Sin dependencias: solo node:*. Para cambiarlo, cambia el contrato y vuelve a generar.
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -449,6 +450,195 @@ function hacerAnexar(verbo, valores, argv) {
   };
 }
 
+// --- los verbos que llaman a la API HTTP del repo ---
+
+const MAX_TEXTO = 4000;
+
+function baseUrl() {
+  const config = DATOS.http.base_url;
+  const valor = (process.env[config.variable] || "").trim() || config.por_defecto;
+  try {
+    new URL(valor);
+  } catch {
+    throw new Fallo(2, config.variable + "=" + valor + " no es una URL.", "Pon en " + config.variable + " la URL del servidor (p. ej. " + config.por_defecto + ") o quítala para usar esa.", false);
+  }
+  return valor.replace(/\/+$/, "");
+}
+
+function esperaMs() {
+  const config = DATOS.http.espera_ms;
+  const valor = Number(process.env[config.variable]);
+  return Number.isFinite(valor) && valor > 0 ? valor : config.por_defecto;
+}
+
+/** La ruta con cada parámetro en su segmento (el resto de la ruta, segmento a segmento) y la consulta. */
+function urlDe(verbo, valores, base) {
+  const impl = verbo.implementacion;
+  const segmentos = [];
+  for (const segmento of impl.ruta.split("/")) {
+    if (!segmento.startsWith(":")) {
+      segmentos.push(segmento);
+      continue;
+    }
+    const nombre = segmento.slice(1).replace(/[*?]+$/, "");
+    const parametro = impl.parametros.find((p) => p.segmento === nombre);
+    const valor = parametro ? valores[parametro.entrada] : undefined;
+    if (valor === undefined || valor === "") continue;
+    if (parametro.resto) segmentos.push(...String(valor).split("/").filter((x) => x !== "").map(encodeURIComponent));
+    else segmentos.push(encodeURIComponent(String(valor)));
+  }
+  const consulta = new URLSearchParams();
+  for (const q of impl.consulta) if (valores[q.entrada] !== undefined) consulta.append(q.parametro, String(valores[q.entrada]));
+  const texto = consulta.toString();
+  return base + (segmentos.join("/") || "/") + (texto === "" ? "" : "?" + texto);
+}
+
+function deTipo(valor, tipo) {
+  if (tipo === "texto" || tipo === "fecha") return typeof valor === "string";
+  if (tipo === "numero") return typeof valor === "number";
+  if (tipo === "entero") return Number.isInteger(valor);
+  if (tipo === "booleano") return typeof valor === "boolean";
+  if (tipo === "lista") return Array.isArray(valor);
+  if (tipo === "objeto") return esObjeto(valor);
+  return true;
+}
+
+/** El cuerpo JSON de --cuerpo, comprobado contra la forma del contrato si se conoce: lo que falta es un 2; lo demás, avisos. */
+function cuerpoDe(verbo, valores) {
+  const c = verbo.implementacion.cuerpo;
+  if (!c || valores[c.entrada] === undefined) return { cuerpo: undefined, avisos: [] };
+  let valor;
+  try {
+    valor = JSON.parse(valores[c.entrada]);
+  } catch (e) {
+    throw uso("«--" + c.entrada + "» no es JSON: " + e.message, verbo);
+  }
+  const avisos = [];
+  if (c.forma) {
+    const campos = c.forma.campos.map((x) => x.nombre + (x.requerido ? "*" : ""));
+    if (!esObjeto(valor)) throw uso("«--" + c.entrada + "» tiene que ser un objeto JSON con " + campos.join(", ") + " (* requerido).", verbo);
+    const faltan = c.forma.campos.filter((x) => x.requerido && (valor[x.nombre] === undefined || valor[x.nombre] === null));
+    if (faltan.length > 0) {
+      throw uso("Al cuerpo le falta " + faltan.map((x) => x.nombre + " (" + x.tipo + ")").join(", ") + ": lo exige " + c.forma.nombre + " (" + c.forma.desde.archivo + ":" + c.forma.desde.linea + ").", verbo);
+    }
+    for (const x of c.forma.campos) {
+      if (valor[x.nombre] !== undefined && valor[x.nombre] !== null && !deTipo(valor[x.nombre], x.tipo)) avisos.push("«" + x.nombre + "» debería ser " + x.tipo + ".");
+    }
+    const conocidos = new Set(c.forma.campos.map((x) => x.nombre));
+    const otros = Object.keys(valor).filter((k) => !conocidos.has(k));
+    if (otros.length > 0) avisos.push("El contrato no conoce " + otros.join(", ") + ": se envía igual.");
+  }
+  return { cuerpo: valor, avisos };
+}
+
+function mensajeDe(respuesta) {
+  if (typeof respuesta === "string") return respuesta.slice(0, 300);
+  if (!esObjeto(respuesta)) return "";
+  return ["error", "message", "mensaje", "detail", "detalle"].filter((k) => typeof respuesta[k] === "string").map((k) => respuesta[k]).join(": ");
+}
+
+/** El estado HTTP, traducido a los códigos del contrato con su siguiente paso. */
+function falloHttp(verbo, estado, respuesta, peticion) {
+  const datos = { peticion, estado, respuesta };
+  const dice = mensajeDe(respuesta);
+  const que = peticion.metodo + " " + peticion.url + " respondió " + estado + (dice ? ": " + dice : ".");
+  if (estado === 400 || estado === 422) return new Fallo(2, que, "El servidor rechazó las entradas: corrígelas según su respuesta y el esquema del verbo (" + PROGRAMA + " --help) y vuelve a llamarlo.", false, datos);
+  if (estado === 404 && verbo.implementacion.parametros.length > 0) return new Fallo(2, que, "No existe lo que pide el parámetro: corrígelo (búscalo con una lectura que liste) y vuelve a llamarlo.", false, datos);
+  if (estado === 404) return new Fallo(3, que, "La ruta no existe en ese servidor: comprueba que " + DATOS.http.base_url.variable + " apunta al servidor de este repo.", false, datos);
+  if (estado === 401 || estado === 403) return new Fallo(5, que, "Hace falta una persona: el servidor pide credenciales que este CLI no maneja; pídele acceso o que haga la operación.", false, datos);
+  if (estado === 409 || estado === 412) return new Fallo(4, que, "El estado cambió o choca con lo que pediste: vuelve a leerlo, ensaya otra vez y luego aplica.", true, datos);
+  if (estado === 429 || estado >= 500) return new Fallo(3, que, "Es del servidor: espera un poco y reintenta; si se repite igual, avisa a una persona con este mensaje.", true, datos);
+  return new Fallo(3, que, "Lee la respuesta del servidor; si no sabes qué hacer con ella, avisa a una persona.", false, datos);
+}
+
+/** Recorta la respuesta de una lectura al presupuesto: la lista de la respuesta (o de su primera clave que sea lista), o el texto. */
+function acotarRespuesta(cuerpo) {
+  if (tokens(JSON.stringify(cuerpo)) <= cuerpo.presupuesto_tokens) return cuerpo;
+  const r = cuerpo.respuesta;
+  let lista;
+  let poner;
+  if (Array.isArray(r)) {
+    lista = r;
+    poner = (x) => (cuerpo.respuesta = x);
+  } else if (esObjeto(r)) {
+    const clave = Object.keys(r).find((k) => Array.isArray(r[k]));
+    if (clave !== undefined) {
+      lista = r[clave];
+      poner = (x) => (r[clave] = x);
+    }
+  }
+  if (lista !== undefined) {
+    let n = lista.length;
+    while (n > 1 && tokens(JSON.stringify(cuerpo)) > cuerpo.presupuesto_tokens) {
+      n = Math.floor(n * 0.8);
+      poner(lista.slice(0, n));
+    }
+    cuerpo.total = lista.length;
+    cuerpo.mostrados = n;
+    cuerpo.truncado = n < lista.length;
+    if (cuerpo.truncado) cuerpo.salida = "Hay " + lista.length + " y se muestran " + n + " para no pasar de " + cuerpo.presupuesto_tokens + " tokens: lee uno con su verbo de leer o acota con las entradas del verbo.";
+  } else if (typeof r === "string") {
+    cuerpo.respuesta = r.slice(0, cuerpo.presupuesto_tokens * CARACTERES_POR_TOKEN);
+    cuerpo.truncado = true;
+  }
+  if (tokens(JSON.stringify(cuerpo)) > cuerpo.presupuesto_tokens) {
+    cuerpo.excede_presupuesto = true;
+    if (!cuerpo.salida) cuerpo.salida = "La respuesta pasa de " + cuerpo.presupuesto_tokens + " tokens y no tiene una lista que recortar.";
+  }
+  return cuerpo;
+}
+
+async function hacerHttp(verbo, valores, argv) {
+  const impl = verbo.implementacion;
+  const url = urlDe(verbo, valores, baseUrl());
+  const { cuerpo, avisos } = cuerpoDe(verbo, valores);
+  const peticion = { metodo: impl.metodo, url };
+  if (cuerpo !== undefined) peticion.cuerpo = cuerpo;
+  const escritura = verbo.tipo === "escritura";
+  const extra = avisos.length > 0 ? { avisos } : {};
+  if (escritura && valores.aplicar !== true) {
+    return {
+      esquema: 1, ensayo: true, verbo: verbo.nombre, peticion, estado: null, respuesta: null, ...extra,
+      para_aplicar: [verbo.nombre, ...argv.filter((a) => a !== "--aplicar"), "--aplicar"],
+      salida: "Es un ensayo: no se hizo ninguna petición. Para hacerla, repite la llamada con --aplicar.",
+    };
+  }
+  const espera = esperaMs();
+  let respuesta;
+  try {
+    respuesta = await fetch(url, {
+      method: impl.metodo,
+      headers: cuerpo !== undefined ? { accept: "application/json", "content-type": "application/json" } : { accept: "application/json" },
+      body: cuerpo !== undefined ? JSON.stringify(cuerpo) : undefined,
+      signal: AbortSignal.timeout(espera),
+    });
+  } catch (e) {
+    const tiempo = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    const c = e && e.cause;
+    const causa = (c && (c.code || (c.errors && c.errors[0] && c.errors[0].code) || c.message)) || (e && e.message);
+    throw new Fallo(
+      3,
+      tiempo ? impl.metodo + " " + url + " no respondió en " + espera + " ms." : "No se pudo llamar a " + impl.metodo + " " + url + ": " + causa,
+      tiempo
+        ? "Si el servidor es lento de verdad, sube " + DATOS.http.espera_ms.variable + "; si no, comprueba que responde y reintenta."
+        : "¿Está levantado el servidor? Levántalo (p. ej. npm run dev) o pon su URL en " + DATOS.http.base_url.variable + ", y reintenta.",
+      true,
+      { peticion },
+    );
+  }
+  const texto = await respuesta.text();
+  let datos;
+  try {
+    datos = texto.trim() === "" ? null : JSON.parse(texto);
+  } catch {
+    datos = texto.slice(0, MAX_TEXTO);
+  }
+  if (!respuesta.ok) throw falloHttp(verbo, respuesta.status, datos, peticion);
+  const salida = { esquema: 1, verbo: verbo.nombre, ...(escritura ? { ensayo: false } : {}), peticion, estado: respuesta.status, respuesta: datos, ...extra };
+  if (escritura) return salida;
+  return acotarRespuesta({ ...salida, presupuesto_tokens: verbo.presupuesto_tokens, truncado: false });
+}
+
 function sinImplementar(verbo) {
   const impl = verbo.implementacion;
   throw new Fallo(5, "«" + verbo.nombre + "» no está implementado en este CLI. Falta: " + impl.falta, impl.salida, false, { verbo: verbo.nombre });
@@ -466,6 +656,8 @@ function ejecutar(verbo, valores, argv) {
       return hacerBuscar(verbo, valores);
     case "anexar":
       return hacerAnexar(verbo, valores, argv);
+    case "http":
+      return hacerHttp(verbo, valores, argv);
     default:
       return sinImplementar(verbo);
   }
@@ -486,7 +678,12 @@ function ayuda() {
     })),
     vedadas: DATOS.vedadas.map((v) => v.nombre),
     codigos: DATOS.codigos,
-    salida: DATOS.relectura ? "Empieza por «" + PROGRAMA + " " + DATOS.relectura + "»: trae la huella que piden las escrituras." : "Elige un verbo.",
+    ...(DATOS.http ? { base_url: { variable: DATOS.http.base_url.variable, por_defecto: DATOS.http.base_url.por_defecto } } : {}),
+    salida: !DATOS.relectura
+      ? "Elige un verbo."
+      : DATOS.verbos.some((v) => v.nombre === DATOS.relectura && v.implementacion.tipo === "http")
+        ? "Empieza por «" + PROGRAMA + " " + DATOS.relectura + "»; el servidor tiene que estar levantado en " + DATOS.http.base_url.variable + "."
+        : "Empieza por «" + PROGRAMA + " " + DATOS.relectura + "»: trae la huella que piden las escrituras.",
   };
 }
 
@@ -511,9 +708,7 @@ function responder(codigo, cuerpo) {
   process.exitCode = codigo;
 }
 
-try {
-  responder(0, principal(process.argv.slice(2)));
-} catch (e) {
+function responderFallo(e) {
   if (e instanceof Fallo) responder(e.codigo, { esquema: 1, error: e.message, salida: e.salida, reintentable: e.reintentable, ...e.datos });
   else {
     responder(3, {
@@ -524,4 +719,9 @@ try {
     });
   }
 }
+
+// Los verbos HTTP son asíncronos; el resto responde igual, en la misma vuelta.
+Promise.resolve()
+  .then(() => principal(process.argv.slice(2)))
+  .then((cuerpo) => responder(0, cuerpo), responderFallo);
 `;

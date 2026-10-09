@@ -31,6 +31,8 @@ function queHace(impl: Implementacion): string {
       return `Busca el texto de \`${impl.entrada}\` en los registros de \`${impl.coleccion}\`.`;
     case "anexar":
       return `Anexa a \`${impl.destino}\` un registro \`${impl.evento}\` con ${impl.campos.length > 0 ? impl.campos.map((c) => `\`${c}\``).join(", ") + " y " : ""}la fecha${impl.existe ? `, si existe en \`${impl.existe.coleccion}\` un registro con ese \`${impl.existe.campo}\`` : ""}.`;
+    case "http":
+      return `Llama a \`${impl.metodo} ${impl.ruta}\` en la URL base${impl.cuerpo !== null ? ` con \`--cuerpo\` como JSON${impl.cuerpo.forma === null ? " (sin validar: no se supo su forma)" : ` (campos de \`${impl.cuerpo.forma.nombre}\`)`}` : ""}.`;
     case "sin-implementar":
       return `**Sin implementar: sale con 5.** Falta: ${impl.falta}`;
   }
@@ -45,10 +47,20 @@ function plantillaDeLeemeDelCli(contrato: Contrato): string {
   const pendientes = contrato.verbos.filter((v) => v.implementacion.tipo === "sin-implementar");
   const lectura = contrato.verbos.find((v) => v.implementacion.tipo === "resumen") ?? contrato.verbos.find((v) => v.tipo === "lectura");
   const escritura = contrato.verbos.find((v) => v.implementacion.tipo === "anexar");
+  const escrituraHttp = contrato.verbos.find((v) => v.implementacion.tipo === "http" && v.tipo === "escritura");
+  const conRequeridas = (v: (typeof contrato.verbos)[number]) =>
+    v.entradas.filter((e) => e.requerida).map((e) => (e.como === "posicional" ? `<${e.nombre}>` : `${e.bandera}=<${e.nombre}>`)).join(" ");
   const ejemplo = [
     ...(lectura !== undefined ? [`${programa} ${lectura.nombre}`] : []),
     ...(escritura !== undefined ? [`${programa} ${escritura.nombre} ${escritura.entradas.filter((e) => e.requerida).map((e) => (e.como === "posicional" ? `<${e.nombre}>` : `${e.bandera}=<${e.nombre}>`)).join(" ")}`.trimEnd() + "            # ensayo", `${programa} ${escritura.nombre} … --aplicar --huella=<huella de la lectura>`] : []),
+    ...(escrituraHttp !== undefined ? [`${programa} ${escrituraHttp.nombre} ${conRequeridas(escrituraHttp)}`.trimEnd() + "            # ensayo: dice qué petición haría", `${programa} ${escrituraHttp.nombre} … --aplicar`] : []),
   ];
+  const http = contrato.http === undefined
+    ? []
+    : [
+      `- Los verbos que llaman a la API HTTP del repo usan la URL base de \`${contrato.http.base_url.variable}\` (por defecto \`${contrato.http.base_url.por_defecto}\`, ${contrato.http.base_url.motivo}): el servidor tiene que estar levantado. Cada respuesta se espera hasta \`${contrato.http.espera_ms.variable}\` ms (por defecto ${contrato.http.espera_ms.por_defecto}).`,
+      "- Por HTTP: 400/422 (y 404 de un parámetro) salen con 2, 401/403 con 5, 409/412 con 4, y si no responde, 5xx o 429 con 3 reintentable. El JSON trae `peticion`, `estado` (el HTTP) y `respuesta`.",
+    ];
   return [
     `# CLI de AX de ${contrato.proyecto.nombre}`,
     "",
@@ -64,6 +76,7 @@ function plantillaDeLeemeDelCli(contrato: Contrato): string {
     "- Se corre desde la raíz del repo; las entradas van como posicionales y `--bandera=valor` (sin espacio), los booleanos solos.",
     `- Las escrituras son un ensayo hasta \`--aplicar\`. Con \`--huella\` (la que devuelve cualquier lectura) salen con 4 si el estado cambió.`,
     "- Escriben con reemplazo atómico (temporal y rename) y devuelven `estado_nuevo` y la `huella` nueva; repetir la misma escritura no cambia nada.",
+    ...http,
     `- Códigos: ${Object.entries(contrato.codigos).map(([c, d]) => `\`${c}\` ${d}`).join(" · ")}.`,
     "",
     "## Verbos",

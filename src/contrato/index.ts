@@ -1,11 +1,13 @@
 // contrato: Informe + Inventario → Contrato. El diseño AX del repo objetivo, del que salen los dos
 // generadores. Función pura: no lee disco ni sabe de plantillas ni lenguajes de destino
 // más allá de cómo se invoca el CLI que los dos comparten.
-import type { Atencion, Contrato, Informe, Inventario, InvocacionDelCli, Lenguaje, TransicionVedada, VerboDelContrato } from "../modelo/index.ts";
+import type {
+  Atencion, Contrato, HttpDelContrato, Informe, Inventario, InvocacionDelCli, Lenguaje, TransicionVedada, VerboDelContrato,
+} from "../modelo/index.ts";
 import { huellaDe } from "./huella.ts";
 import { conImplementacion, dominioDe } from "./implementacion.ts";
 import { vedadasDe } from "./vedadas.ts";
-import { lecturasDe, slug, verbosDe } from "./verbos.ts";
+import { lecturasDe, modelosDelDominio, notasHttp, slug, verbosDe } from "./verbos.ts";
 
 export { cuerpoFirmado, huellaDe, jsonCanonico, sha256 } from "./huella.ts";
 
@@ -40,8 +42,27 @@ export function generarContrato(informe: Informe, inventario: Inventario): Contr
     codigos: CODIGOS,
     atiende: atencionesDe(informe, verbos, vedadas),
     notas: notasDe(inventario, verbos),
+    // Solo si hay verbos HTTP: así el contrato (y su huella) de un repo sin ellos no cambia.
+    ...(verbos.some((v) => v.implementacion.tipo === "http") ? { http: httpDe(inventario) } : {}),
   };
   return { ...sinHuella, huella: huellaDe(sinHuella) };
+}
+
+/** El puerto en el que escucha por defecto el servidor de desarrollo del marco que declara el repo. */
+function httpDe(inventario: Inventario): HttpDelContrato {
+  const dependencias = new Set(inventario.manifiestos.flatMap((m) => [...m.dependencias, ...m.dependencias_de_desarrollo]));
+  const python = inventario.modulos.flatMap((m) => (m.lenguaje === "python" ? m.imports : []));
+  const [por_defecto, motivo] = dependencias.has("next")
+    ? ["http://localhost:3000", "el puerto de `next dev`"]
+    : python.some((i) => /^(fastapi|uvicorn)\b/.test(i)) || dependencias.has("fastapi")
+      ? ["http://localhost:8000", "el puerto de uvicorn (FastAPI)"]
+      : python.some((i) => /^flask\b/.test(i)) || dependencias.has("flask")
+        ? ["http://localhost:5000", "el puerto de `flask run`"]
+        : ["http://localhost:3000", "un valor habitual: el repo no declara un marco conocido"];
+  return {
+    base_url: { variable: "AX_BASE_URL", por_defecto, motivo },
+    espera_ms: { variable: "AX_HTTP_ESPERA_MS", por_defecto: 30000 },
+  };
 }
 
 function invocacion(lenguaje: "javascript" | "python"): InvocacionDelCli {
@@ -74,8 +95,11 @@ function nombreDelProyecto(inventario: Inventario): string {
 
 /** Qué hace el contrato con cada hallazgo del Informe que sabe atender; el resto no se lista. */
 function atencionesDe(informe: Informe, verbos: readonly VerboDelContrato[], vedadas: readonly TransicionVedada[]): Atencion[] {
-  const lectura = verbos.find((v) => v.tipo === "lectura")?.nombre;
-  const escritura = verbos.filter((v) => v.tipo === "escritura");
+  // Una lectura por HTTP no trae huella ni sale del estado en archivos: no atiende esos criterios.
+  const lectura = verbos.find((v) => v.tipo === "lectura" && v.implementacion.tipo !== "http")?.nombre;
+  const todasLasEscrituras = verbos.filter((v) => v.tipo === "escritura");
+  // Las escrituras por HTTP no traen huella ni estado nuevo: el estado es del servidor.
+  const escritura = todasLasEscrituras.filter((v) => v.implementacion.tipo !== "http");
   const entrega = escritura.find((v) => v.evidencia.exige.includes("evidencia"))?.nombre;
   const como = (criterio: string): string | undefined => {
     const [eje] = criterio.split("/");
@@ -101,7 +125,7 @@ function atencionesDe(informe: Informe, verbos: readonly VerboDelContrato[], ved
       case "escritura-verificada/reintento-seguro":
         return escritura.length > 0 ? "Los verbos de escritura aceptan --huella y salen con 4 si el estado cambió." : undefined;
       case "escritura-verificada/ensayo-antes-de-escribir":
-        return escritura.length > 0 ? "Los verbos de escritura son un ensayo sin --aplicar." : undefined;
+        return todasLasEscrituras.length > 0 ? "Los verbos de escritura son un ensayo sin --aplicar." : undefined;
       case "evidencia-y-trazabilidad/entrega-con-evidencia":
         return entrega !== undefined ? `«${entrega}» exige --evidencia.` : undefined;
       default:
@@ -131,6 +155,18 @@ function notasDe(inventario: Inventario, verbos: readonly VerboDelContrato[]): s
   if (verbos.some((v) => v.implementacion.tipo === "anexar")) {
     notas.push("Las escrituras anexan un registro a la bitácora del dominio (evento, entradas y fecha); no cambian otros archivos ni hacen transiciones vedadas.");
   }
+  if (verbos.some((v) => v.implementacion.tipo === "http")) {
+    notas.push(
+      "Sin CLI ni MCP en el repo, los verbos salen de sus rutas HTTP, uno por método y ruta, y el CLI generado las llama: " +
+        "el servidor tiene que estar levantado en AX_BASE_URL. Las escrituras no traen huella ni estado nuevo: el estado es del servidor.",
+    );
+  }
+  const modelos = modelosDelDominio(inventario);
+  if (modelos.length > 0) {
+    const esquemas = [...new Set(modelos.map((m) => m.archivo))].join(", ");
+    notas.push(`El estado del dominio vive en una base de datos (modelos de Prisma en ${esquemas}: ${modelos.map((m) => m.nombre).join(", ")}): el CLI generado no la lee directo.`);
+  }
+  notas.push(...notasHttp(inventario, verbos));
   if (inventario.limites.truncado) notas.push("El análisis se cortó por tope de archivos: puede haber verbos que no se vieron.");
   return notas;
 }

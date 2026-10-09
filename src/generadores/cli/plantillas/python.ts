@@ -13,8 +13,9 @@ const CABEZA = String.raw`#!/usr/bin/env python3
 # estado del dominio. JSON por stdout con "esquema": 1, también los errores (error, salida,
 # reintentable). Códigos: 0 bien, 2 uso, 3 error, 4 el estado cambió desde la huella, 5 hace
 # falta una persona. Las escrituras son un ensayo hasta --aplicar; con --huella salen con 4 si el
-# estado cambió desde esa lectura. Las transiciones vedadas no son verbos.
-# Sin dependencias: solo la biblioteca estándar. Para cambiarlo, cambia el contrato y vuelve a generar.
+# estado cambió desde esa lectura. Las transiciones vedadas no son verbos. Los verbos HTTP llaman a
+# la API del repo en la URL base del contrato (http.base_url: su variable de entorno o el valor por
+# defecto). Sin dependencias: solo la biblioteca estándar. Para cambiarlo, cambia el contrato y vuelve a generar.
 import csv
 import datetime
 import hashlib
@@ -23,6 +24,9 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
 `;
 
@@ -455,6 +459,215 @@ def hacer_anexar(verbo, valores, argv):
             "salida": "Escrito en " + impl["destino"] + ". Pasa la huella nueva a la próxima escritura."}
 
 
+# --- los verbos que llaman a la API HTTP del repo ---
+
+MAX_TEXTO = 4000
+
+
+def base_url():
+    config = DATOS["http"]["base_url"]
+    valor = (os.environ.get(config["variable"]) or "").strip() or config["por_defecto"]
+    partes = urllib.parse.urlsplit(valor)
+    if partes.scheme not in ("http", "https") or not partes.netloc:
+        raise Fallo(2, config["variable"] + "=" + valor + " no es una URL.", "Pon en " + config["variable"] + " la URL del servidor (p. ej. " + config["por_defecto"] + ") o quítala para usar esa.")
+    return valor.rstrip("/")
+
+
+def espera_ms():
+    config = DATOS["http"]["espera_ms"]
+    try:
+        valor = float(os.environ.get(config["variable"]) or "")
+    except ValueError:
+        return config["por_defecto"]
+    return valor if valor > 0 else config["por_defecto"]
+
+
+def url_de(verbo, valores, base):
+    impl = verbo["implementacion"]
+    segmentos = []
+    for segmento in impl["ruta"].split("/"):
+        if not segmento.startswith(":"):
+            segmentos.append(segmento)
+            continue
+        nombre = segmento[1:].rstrip("*?")
+        parametro = next((p for p in impl["parametros"] if p["segmento"] == nombre), None)
+        valor = valores.get(parametro["entrada"]) if parametro is not None else None
+        if valor in (None, ""):
+            continue
+        if parametro["resto"]:
+            segmentos.extend(urllib.parse.quote(x, safe="") for x in str(valor).split("/") if x != "")
+        else:
+            segmentos.append(urllib.parse.quote(str(valor), safe=""))
+    consulta = [(q["parametro"], como_texto(valores[q["entrada"]])) for q in impl["consulta"] if valores.get(q["entrada"]) is not None]
+    texto = urllib.parse.urlencode(consulta)
+    return base + ("/".join(segmentos) or "/") + ("?" + texto if texto else "")
+
+
+def de_tipo(valor, tipo):
+    if tipo in ("texto", "fecha"):
+        return isinstance(valor, str)
+    if tipo == "numero":
+        return isinstance(valor, (int, float)) and not isinstance(valor, bool)
+    if tipo == "entero":
+        return isinstance(valor, int) and not isinstance(valor, bool)
+    if tipo == "booleano":
+        return isinstance(valor, bool)
+    if tipo == "lista":
+        return isinstance(valor, list)
+    if tipo == "objeto":
+        return es_objeto(valor)
+    return True
+
+
+def cuerpo_de(verbo, valores):
+    c = verbo["implementacion"]["cuerpo"]
+    if not c or valores.get(c["entrada"]) is None:
+        return None, []
+    try:
+        valor = json.loads(valores[c["entrada"]])
+    except ValueError as e:
+        raise uso("«--" + c["entrada"] + "» no es JSON: " + str(e), verbo)
+    avisos = []
+    forma = c["forma"]
+    if forma:
+        if not es_objeto(valor):
+            raise uso("«--" + c["entrada"] + "» tiene que ser un objeto JSON con " + ", ".join(x["nombre"] + ("*" if x["requerido"] else "") for x in forma["campos"]) + " (* requerido).", verbo)
+        faltan = [x for x in forma["campos"] if x["requerido"] and valor.get(x["nombre"]) is None]
+        if faltan:
+            raise uso("Al cuerpo le falta " + ", ".join(x["nombre"] + " (" + x["tipo"] + ")" for x in faltan) + ": lo exige " + forma["nombre"] + " (" + forma["desde"]["archivo"] + ":" + str(forma["desde"]["linea"]) + ").", verbo)
+        for x in forma["campos"]:
+            if valor.get(x["nombre"]) is not None and not de_tipo(valor[x["nombre"]], x["tipo"]):
+                avisos.append("«" + x["nombre"] + "» debería ser " + x["tipo"] + ".")
+        conocidos = set(x["nombre"] for x in forma["campos"])
+        otros = [k for k in valor if k not in conocidos]
+        if otros:
+            avisos.append("El contrato no conoce " + ", ".join(otros) + ": se envía igual.")
+    return valor, avisos
+
+
+def mensaje_de(respuesta):
+    if isinstance(respuesta, str):
+        return respuesta[:300]
+    if not es_objeto(respuesta):
+        return ""
+    return ": ".join(respuesta[k] for k in ("error", "message", "mensaje", "detail", "detalle") if isinstance(respuesta.get(k), str))
+
+
+def fallo_http(verbo, estado, respuesta, peticion):
+    datos = {"peticion": peticion, "estado": estado, "respuesta": respuesta}
+    dice = mensaje_de(respuesta)
+    que = peticion["metodo"] + " " + peticion["url"] + " respondió " + str(estado) + (": " + dice if dice else ".")
+    variable = DATOS["http"]["base_url"]["variable"]
+    if estado in (400, 422):
+        return Fallo(2, que, "El servidor rechazó las entradas: corrígelas según su respuesta y el esquema del verbo (" + PROGRAMA + " --help) y vuelve a llamarlo.", False, datos)
+    if estado == 404 and verbo["implementacion"]["parametros"]:
+        return Fallo(2, que, "No existe lo que pide el parámetro: corrígelo (búscalo con una lectura que liste) y vuelve a llamarlo.", False, datos)
+    if estado == 404:
+        return Fallo(3, que, "La ruta no existe en ese servidor: comprueba que " + variable + " apunta al servidor de este repo.", False, datos)
+    if estado in (401, 403):
+        return Fallo(5, que, "Hace falta una persona: el servidor pide credenciales que este CLI no maneja; pídele acceso o que haga la operación.", False, datos)
+    if estado in (409, 412):
+        return Fallo(4, que, "El estado cambió o choca con lo que pediste: vuelve a leerlo, ensaya otra vez y luego aplica.", True, datos)
+    if estado == 429 or estado >= 500:
+        return Fallo(3, que, "Es del servidor: espera un poco y reintenta; si se repite igual, avisa a una persona con este mensaje.", True, datos)
+    return Fallo(3, que, "Lee la respuesta del servidor; si no sabes qué hacer con ella, avisa a una persona.", False, datos)
+
+
+def acotar_respuesta(cuerpo):
+    presupuesto = cuerpo["presupuesto_tokens"]
+    if tokens(a_json(cuerpo)) <= presupuesto:
+        return cuerpo
+    r = cuerpo["respuesta"]
+    lista = None
+    clave = None
+    if isinstance(r, list):
+        lista = r
+    elif es_objeto(r):
+        clave = next((k for k in r if isinstance(r[k], list)), None)
+        if clave is not None:
+            lista = r[clave]
+    if lista is not None:
+        n = len(lista)
+        while n > 1 and tokens(a_json(cuerpo)) > presupuesto:
+            n = int(n * 0.8)
+            if clave is None:
+                cuerpo["respuesta"] = lista[:n]
+            else:
+                r[clave] = lista[:n]
+        cuerpo["total"] = len(lista)
+        cuerpo["mostrados"] = n
+        cuerpo["truncado"] = n < len(lista)
+        if cuerpo["truncado"]:
+            cuerpo["salida"] = "Hay " + str(len(lista)) + " y se muestran " + str(n) + " para no pasar de " + str(presupuesto) + " tokens: lee uno con su verbo de leer o acota con las entradas del verbo."
+    elif isinstance(r, str):
+        cuerpo["respuesta"] = r[: presupuesto * CARACTERES_POR_TOKEN]
+        cuerpo["truncado"] = True
+    if tokens(a_json(cuerpo)) > presupuesto:
+        cuerpo["excede_presupuesto"] = True
+        cuerpo.setdefault("salida", "La respuesta pasa de " + str(presupuesto) + " tokens y no tiene una lista que recortar.")
+    return cuerpo
+
+
+def leer_respuesta(datos):
+    texto = datos.decode("utf-8", "replace")
+    if texto.strip() == "":
+        return None
+    try:
+        return json.loads(texto)
+    except ValueError:
+        return texto[:MAX_TEXTO]
+
+
+def hacer_http(verbo, valores, argv):
+    impl = verbo["implementacion"]
+    url = url_de(verbo, valores, base_url())
+    cuerpo, avisos = cuerpo_de(verbo, valores)
+    peticion = {"metodo": impl["metodo"], "url": url}
+    if cuerpo is not None:
+        peticion["cuerpo"] = cuerpo
+    escritura = verbo["tipo"] == "escritura"
+    extra = {"avisos": avisos} if avisos else {}
+    if escritura and valores.get("aplicar") is not True:
+        salida = {"esquema": 1, "ensayo": True, "verbo": verbo["nombre"], "peticion": peticion, "estado": None, "respuesta": None}
+        salida.update(extra)
+        salida["para_aplicar"] = [verbo["nombre"]] + [a for a in argv if a != "--aplicar"] + ["--aplicar"]
+        salida["salida"] = "Es un ensayo: no se hizo ninguna petición. Para hacerla, repite la llamada con --aplicar."
+        return salida
+    cabeceras = {"accept": "application/json"}
+    datos = None
+    if cuerpo is not None:
+        cabeceras["content-type"] = "application/json"
+        datos = json.dumps(cuerpo, ensure_ascii=False).encode("utf-8")
+    pedido = urllib.request.Request(url, data=datos, headers=cabeceras, method=impl["metodo"])
+    espera = espera_ms()
+    try:
+        with urllib.request.urlopen(pedido, timeout=espera / 1000) as r:
+            estado, respuesta = r.status, leer_respuesta(r.read())
+    except urllib.error.HTTPError as e:
+        raise fallo_http(verbo, e.code, leer_respuesta(e.read()), peticion)
+    except (urllib.error.URLError, OSError) as e:
+        causa = getattr(e, "reason", e)
+        tiempo = isinstance(causa, TimeoutError) or "timed out" in str(causa)
+        variable = DATOS["http"]["base_url"]["variable"]
+        raise Fallo(
+            3,
+            (impl["metodo"] + " " + url + " no respondió en " + str(int(espera)) + " ms.") if tiempo else ("No se pudo llamar a " + impl["metodo"] + " " + url + ": " + str(causa)),
+            ("Si el servidor es lento de verdad, sube " + DATOS["http"]["espera_ms"]["variable"] + "; si no, comprueba que responde y reintenta.") if tiempo
+            else ("¿Está levantado el servidor? Levántalo o pon su URL en " + variable + ", y reintenta."),
+            True,
+            {"peticion": peticion},
+        )
+    salida = {"esquema": 1, "verbo": verbo["nombre"]}
+    if escritura:
+        salida["ensayo"] = False
+    salida.update({"peticion": peticion, "estado": estado, "respuesta": respuesta})
+    salida.update(extra)
+    if escritura:
+        return salida
+    salida.update({"presupuesto_tokens": verbo["presupuesto_tokens"], "truncado": False})
+    return acotar_respuesta(salida)
+
+
 def sin_implementar(verbo):
     impl = verbo["implementacion"]
     raise Fallo(5, "«" + verbo["nombre"] + "» no está implementado en este CLI. Falta: " + impl["falta"], impl["salida"], False, {"verbo": verbo["nombre"]})
@@ -472,6 +685,8 @@ def ejecutar(verbo, valores, argv):
         return hacer_buscar(verbo, valores)
     if tipo == "anexar":
         return hacer_anexar(verbo, valores, argv)
+    if tipo == "http":
+        return hacer_http(verbo, valores, argv)
     return sin_implementar(verbo)
 
 
@@ -480,15 +695,26 @@ def ayuda():
         base = "<" + e["nombre"] + ">" if e["como"] == "posicional" else e["bandera"] + ("" if e["tipo"] == "booleano" else "=…")
         return base + (" (requerida)" if e["requerida"] else "")
 
-    return {
+    cuerpo = {
         "esquema": 1, "nombre": DATOS["nombre"], "contrato": DATOS["contrato"],
         "uso": PROGRAMA + " <verbo> [posicionales] [--bandera=valor] [--booleano]",
         "verbos": [{"nombre": v["nombre"], "tipo": v["tipo"], "descripcion": v["descripcion"], "entradas": [entrada(e) for e in v["entradas"]],
                     "implementado": v["implementacion"]["tipo"] != "sin-implementar"} for v in DATOS["verbos"]],
         "vedadas": [v["nombre"] for v in DATOS["vedadas"]],
         "codigos": DATOS["codigos"],
-        "salida": ("Empieza por «" + PROGRAMA + " " + DATOS["relectura"] + "»: trae la huella que piden las escrituras.") if DATOS["relectura"] else "Elige un verbo.",
+        "salida": salida_de_la_ayuda(),
     }
+    if DATOS["http"]:
+        cuerpo["base_url"] = {"variable": DATOS["http"]["base_url"]["variable"], "por_defecto": DATOS["http"]["base_url"]["por_defecto"]}
+    return cuerpo
+
+
+def salida_de_la_ayuda():
+    if not DATOS["relectura"]:
+        return "Elige un verbo."
+    if any(v["nombre"] == DATOS["relectura"] and v["implementacion"]["tipo"] == "http" for v in DATOS["verbos"]):
+        return "Empieza por «" + PROGRAMA + " " + DATOS["relectura"] + "»; el servidor tiene que estar levantado en " + DATOS["http"]["base_url"]["variable"] + "."
+    return "Empieza por «" + PROGRAMA + " " + DATOS["relectura"] + "»: trae la huella que piden las escrituras."
 
 
 def principal(argv):

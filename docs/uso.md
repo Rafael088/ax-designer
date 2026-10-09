@@ -101,6 +101,22 @@ Reglas de seguridad que conviene conocer:
 - Los verbos que el contrato no dice cómo implementar se listan en el ensayo: axd escribe
   `ax/cli.md` documentando qué quedó sin hacer y por qué.
 
+**Apps web sin CLI ni MCP.** Si el repo es una app web (rutas de Next.js en `app/**/route.ts` o
+`pages/api/**`, Express, Flask o FastAPI), cada método de cada ruta se vuelve un verbo:
+`listar-`/`leer-` para GET, `crear-` para POST, `actualizar-`/`reemplazar-` para PATCH/PUT y
+`borrar-` para DELETE. Los segmentos `[id]` son argumentos, y el cuerpo de una escritura se saca
+del esquema zod del manejador o, si no hay, del modelo de Prisma. El CLI generado llama a la app
+por HTTP, así que la app tiene que estar levantada:
+
+```sh
+AX_BASE_URL=http://localhost:3000 node ax/cli.mjs leer-productos 7
+AX_BASE_URL=http://localhost:3000 node ax/cli.mjs crear-orders --cuerpo='{"...": "..."}' --aplicar
+```
+
+Sin `AX_BASE_URL` usa el puerto por defecto del marco (Next 3000, FastAPI 8000, Flask 5000). El
+tiempo de espera se cambia con `AX_HTTP_ESPERA_MS`. Si la app no responde, sale con `3` y
+`reintentable: true`.
+
 Después de generar, la guía del repo objetivo debe enlazar `ax/cli.md` (o añádelo tú): sin eso,
 un agente nuevo no sabe que la herramienta existe.
 

@@ -118,7 +118,7 @@ test("lo generado no tiene dependencias: solo node:* en Node y la biblioteca est
   assert.doesNotMatch(js, /require\(|import\(/);
   const py = archivosCli(enPython(contrato))[1]!.contenido;
   const modulos = [...py.matchAll(/^(?:import|from) (\w+)/gm)].map((m) => m[1]!);
-  assert.deepEqual([...new Set(modulos)].sort(), ["csv", "datetime", "hashlib", "io", "json", "os", "re", "sys"]);
+  assert.deepEqual([...new Set(modulos)].sort(), ["csv", "datetime", "hashlib", "io", "json", "os", "re", "sys", "urllib"]);
 });
 
 test("archivosCli se niega con 5 si el contrato no tiene verbos", () => {

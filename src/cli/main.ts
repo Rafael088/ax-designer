@@ -12,7 +12,7 @@ import { correrValidacion, ensayarValidacion, leerPrecios, leerTareas, validarRe
 import { MOTORES, verificador } from "../validador/motores/index.ts";
 
 // Sincronizada con package.json; pruebas/cli.test.ts comprueba que no se separe.
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const VERBOS = [
   { verbo: "estado [repo]", descripcion: "El resumen barato (< 1k tokens): puntuación por eje, críticos pendientes, si lo generado en ax/ está al día con el contrato, las corridas y el siguiente paso. No escribe ni gasta." },

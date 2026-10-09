@@ -37,7 +37,11 @@ export function plantillaDeLeeme(contrato: Contrato, rutaDelServidor: string): s
     return `| \`${v.nombre}\` | ${v.tipo} | ${entradas} | ${celda(v.descripcion)} |`;
   });
   const vedadas = contrato.vedadas.map((v) => `- \`${v.nombre}\`: ${v.que} ${v.motivo}`);
-  const config = { mcpServers: { [contrato.proyecto.nombre]: { command: "node", args: [rutaDelServidor] } } };
+  const http = contrato.http;
+  const servidor = http === undefined
+    ? { command: "node", args: [rutaDelServidor] }
+    : { command: "node", args: [rutaDelServidor], env: { [http.base_url.variable]: http.base_url.por_defecto } };
+  const config = { mcpServers: { [contrato.proyecto.nombre]: servidor } };
   return [
     `# ${nombre}`,
     "",
@@ -61,10 +65,19 @@ export function plantillaDeLeeme(contrato: Contrato, rutaDelServidor: string): s
     JSON.stringify(config, null, 2),
     "```",
     "",
+    ...(http === undefined
+      ? []
+      : [
+        `Las tools llaman a la API HTTP del repo en \`${http.base_url.variable}\` (por defecto \`${http.base_url.por_defecto}\`): el servidor`,
+        "tiene que estar levantado. Cámbiala en el `env` de arriba si escucha en otra URL.",
+        "",
+      ]),
     "## Tools",
     "",
     "Una por verbo del contrato. `*` es una entrada requerida. Las de escritura son un ensayo hasta que",
-    "se pasa `aplicar: true`; pásales la `huella` de la última lectura.",
+    http === undefined
+      ? "se pasa `aplicar: true`; pásales la `huella` de la última lectura."
+      : "se pasa `aplicar: true`; las que no llaman a la API, con la `huella` de la última lectura.",
     "",
     "| Tool | Tipo | Entradas | Qué hace |",
     "| --- | --- | --- | --- |",

@@ -118,7 +118,7 @@ function deEscritura(verbo: VerboSinImplementar, dominio: DominioDelContrato): I
 /** Cada verbo con su implementación; los que quedan sin implementar ganan el error 5 que darán. */
 export function conImplementacion(verbos: readonly VerboSinImplementar[], dominio: DominioDelContrato): VerboDelContrato[] {
   return verbos.map((v) => {
-    const implementacion = v.tipo === "lectura" ? deLectura(v, dominio) : deEscritura(v, dominio);
+    const implementacion = v.implementacion ?? (v.tipo === "lectura" ? deLectura(v, dominio) : deEscritura(v, dominio));
     if (implementacion.tipo !== "sin-implementar") return { ...v, implementacion };
     return {
       ...v,
