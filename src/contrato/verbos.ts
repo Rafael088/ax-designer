@@ -10,6 +10,7 @@ import type {
   RutaApi, TipoDeCampo, VerboDelContrato,
 } from "../modelo/index.ts";
 import { contarTokens } from "../medicion/index.ts";
+import { describirCampo, describirParametro, describirRespuesta, describirVerboHttp } from "./descripciones.ts";
 import { VERBOS_DE_CIERRE, VERBOS_DE_LECTURA, criterioJson } from "../rubrica/index.ts";
 
 /** Las lecturas que son «el resumen»: su presupuesto es el umbral de cumple de costo-del-resumen. */
@@ -24,7 +25,11 @@ type Visto = VerboDelContrato["visto_en"][number];
 type MetodoDelVerbo = Extract<Implementacion, { tipo: "http" }>["metodo"];
 type ParametroDeRuta = { nombre: string; resto: boolean; opcional: boolean };
 /** Lo que hace falta para llamar a una ruta HTTP: un candidato por método y ruta, si no hay CLI ni MCP. */
-type LlamadaHttp = { metodo: MetodoDelVerbo; ruta: string; parametros: ParametroDeRuta[]; consulta: string[]; cuerpo: CuerpoInferido | undefined; sinMetodo: boolean };
+type LlamadaHttp = {
+  metodo: MetodoDelVerbo; ruta: string; parametros: ParametroDeRuta[]; consulta: string[]; cuerpo: CuerpoInferido | undefined; sinMetodo: boolean;
+  /** La ruta tal como la vio el analizador: de ahí salen las descripciones. */
+  api: RutaApi;
+};
 type Candidato = {
   nombre: string; vistos: Visto[]; banderas: Set<string>; posicionales: string[]; escrituraHttp: boolean | undefined; http?: LlamadaHttp;
 };
@@ -116,7 +121,7 @@ function nombresHttp(rutas: readonly RutaApi[]): string[] {
 function llamadaHttp(r: RutaApi): LlamadaHttp {
   const parametros = r.ruta.split("/").flatMap((s) => parametroDe(s) ?? []);
   const metodo: MetodoDelVerbo = r.metodo === "all" ? "GET" : (r.metodo.toUpperCase() as MetodoDelVerbo);
-  return { metodo, ruta: r.ruta, parametros, consulta: r.consulta ?? [], cuerpo: r.cuerpo, sinMetodo: r.metodo === "all" };
+  return { metodo, ruta: r.ruta, parametros, consulta: r.consulta ?? [], cuerpo: r.cuerpo, sinMetodo: r.metodo === "all", api: r };
 }
 
 function candidatos(inventario: Inventario): Candidato[] {
@@ -187,7 +192,7 @@ function describirCuerpo(forma: CuerpoInferido | null, metodo: string): string {
   if (forma === null) {
     return `El cuerpo JSON de la petición ${metodo}. No se pudo inferir su forma: va tal cual, sin validar (mira las notas del contrato).`;
   }
-  const campos = forma.campos.map((c) => `${c.nombre} (${TIPO_LEGIBLE[c.tipo]}${c.requerido ? ", requerido" : ""})`).join(", ");
+  const campos = forma.campos.map((c) => describirCampo(c, TIPO_LEGIBLE[c.tipo])).join(", ");
   const de = forma.origen === "zod" ? `del esquema zod «${forma.nombre}»` : `del modelo de Prisma «${forma.nombre}»`;
   return `El cuerpo JSON de la petición ${metodo}, un objeto con ${campos || "ningún campo visto"}; sale ${de} (${forma.desde.archivo}:${forma.desde.linea}).`;
 }
@@ -207,7 +212,8 @@ function entradasHttp(c: Candidato, http: LlamadaHttp, cuerpo: CuerpoInferido | 
   for (const q of http.consulta) {
     const nombre = snake(q);
     if (entradas.some((e) => e.nombre === nombre)) continue;
-    entradas.push({ nombre, tipo: "texto", requerida: false, descripcion: `El parámetro de consulta «${q}» que lee el manejador (${donde}).`, como: "bandera", bandera: `--${slug(q)}` });
+    const detalle = http.api.consulta_detalle?.find((p) => p.nombre === q);
+    entradas.push({ nombre, tipo: "texto", requerida: detalle?.requerido === true, descripcion: describirParametro(q, detalle, http.api, donde), como: "bandera", bandera: `--${slug(q)}` });
   }
   if (tieneCuerpo(http.metodo)) {
     entradas.push({
@@ -375,17 +381,17 @@ function verboHttp(c: Candidato, http: LlamadaHttp, modelos: ReturnType<typeof m
   const forma = tieneCuerpo(http.metodo) ? (http.cuerpo ?? cuerpoDesdePrisma(http, modelos) ?? null) : null;
   const peticion = `${http.metodo} ${http.ruta}`;
   const entradas = entradasHttp(c, http, forma);
+  const respuesta = describirRespuesta(http.api.respuesta, modelos, http.api.consulta_detalle);
+  const enRespuesta = respuesta !== undefined ? ` En «respuesta», ${respuesta}.` : "";
   return {
     nombre: c.nombre,
     tipo,
-    descripcion: tipo === "lectura"
-      ? `Llama a ${peticion} en la API del repo y devuelve su respuesta en JSON, acotada. No cambia nada.`
-      : `Llama a ${peticion} en la API del repo. Sin aplicar es un ensayo que dice qué petición haría y no la hace.`,
+    descripcion: describirVerboHttp(http.api, http.metodo, tieneCuerpo(http.metodo), modelos),
     argv: [c.nombre],
     entradas,
     salida: tipo === "lectura"
-      ? { descripcion: "JSON con esquema, la petición hecha, el estado HTTP y la respuesta (recortada si pasa del presupuesto).", claves: ["esquema", "peticion", "estado", "respuesta"] }
-      : { descripcion: "JSON con esquema; en el ensayo, la petición que haría; al aplicar, la petición, el estado HTTP y la respuesta.", claves: ["esquema", "ensayo", "peticion", "estado", "respuesta"] },
+      ? { descripcion: `JSON con esquema, la petición hecha, el estado HTTP y la respuesta (recortada si pasa del presupuesto).${enRespuesta}`, claves: ["esquema", "peticion", "estado", "respuesta"] }
+      : { descripcion: `JSON con esquema; en el ensayo, la petición que haría; al aplicar, la petición, el estado HTTP y la respuesta.${enRespuesta}`, claves: ["esquema", "ensayo", "peticion", "estado", "respuesta"] },
     errores: erroresHttp(tipo, http.parametros.length > 0),
     ensayo_por_defecto: tipo === "escritura",
     evidencia: tipo === "lectura" ? { exige: [], devuelve: ["peticion", "estado", "respuesta"] } : { exige: [], devuelve: ["peticion", "estado", "respuesta"] },

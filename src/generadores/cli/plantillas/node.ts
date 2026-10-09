@@ -663,6 +663,26 @@ function ejecutar(verbo, valores, argv) {
   }
 }
 
+/** La ayuda de un verbo: qué hace y cada entrada con su descripción (por defecto, topes, de dónde sale). */
+function ayudaDeVerbo(verbo) {
+  return {
+    esquema: 1,
+    verbo: verbo.nombre,
+    tipo: verbo.tipo,
+    descripcion: verbo.descripcion,
+    uso: [PROGRAMA, verbo.nombre]
+      .concat(verbo.entradas.map((e) => (e.como === "posicional" ? "<" + e.nombre + ">" : e.bandera + (e.tipo === "booleano" ? "" : "=…"))))
+      .join(" "),
+    entradas: verbo.entradas.map((e) => ({
+      entrada: e.como === "posicional" ? "<" + e.nombre + ">" : e.bandera,
+      requerida: e.requerida,
+      descripcion: e.descripcion,
+    })),
+    implementado: verbo.implementacion.tipo !== "sin-implementar",
+    salida: "Llama a «" + PROGRAMA + " " + verbo.nombre + "» con esas entradas.",
+  };
+}
+
 function ayuda() {
   return {
     esquema: 1,
@@ -678,6 +698,7 @@ function ayuda() {
     })),
     vedadas: DATOS.vedadas.map((v) => v.nombre),
     codigos: DATOS.codigos,
+    detalle: PROGRAMA + " <verbo> --help: sus entradas con su descripción (valor por defecto, topes, valores).",
     ...(DATOS.http ? { base_url: { variable: DATOS.http.base_url.variable, por_defecto: DATOS.http.base_url.por_defecto } } : {}),
     salida: !DATOS.relectura
       ? "Elige un verbo."
@@ -700,6 +721,7 @@ function principal(argv) {
     }
     throw uso("No hay ningún verbo «" + nombre + "». Los verbos son: " + DATOS.verbos.map((v) => v.nombre).join(", ") + ".");
   }
+  if (resto.includes("--help") || resto.includes("-h")) return ayudaDeVerbo(verbo);
   return ejecutar(verbo, parsear(verbo, resto), resto);
 }
 

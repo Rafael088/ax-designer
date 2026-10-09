@@ -6,13 +6,14 @@ import { estadoDe } from "../estado/index.ts";
 import { GENERADORES, esGeneradoPorAxd, generar, type Generador } from "../generadores/index.ts";
 import { generarInforme, renderizarMarkdown } from "../informe/index.ts";
 import { medir } from "../medicion/index.ts";
-import { ErrorAx } from "../modelo/index.ts";
+import { ErrorAx, MODOS_CON } from "../modelo/index.ts";
+import type { ModoCon } from "../modelo/index.ts";
 import { evaluarRubrica } from "../rubrica/index.ts";
 import { correrValidacion, ensayarValidacion, leerPrecios, leerTareas, validarRepeticiones } from "../validador/index.ts";
 import { MOTORES, verificador } from "../validador/motores/index.ts";
 
 // Sincronizada con package.json; pruebas/cli.test.ts comprueba que no se separe.
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const VERBOS = [
   { verbo: "estado [repo]", descripcion: "El resumen barato (< 1k tokens): puntuación por eje, críticos pendientes, si lo generado en ax/ está al día con el contrato, las corridas y el siguiente paso. No escribe ni gasta." },
@@ -21,7 +22,7 @@ const VERBOS = [
   { verbo: "auditar [repo] [--formato json|md]", descripcion: "El informe por los 7 ejes con puntuación." },
   { verbo: "contrato [repo]", descripcion: "El contrato propuesto." },
   { verbo: "generar <cli|mcp> [repo] [--aplicar] [--huella <h>]", descripcion: "Sin --aplicar, el ensayo: qué archivos crearía y por qué. Con --huella del ensayo, sale con 4 si el destino cambió." },
-  { verbo: "validar [repo] --tareas <archivo> [--correr] [--motor claude|mentira] [--repeticiones N] [--precios <archivo>]", descripcion: "Sin --correr, el plan de corridas (cada tarea sin y con lo generado) y su costo estimado; no copia, no escribe ni gasta. Con --correr las corre (con el motor claude, GASTA), compara rondas, tokens, costo y si terminó, y lo deja en .ax-corridas/." },
+  { verbo: "validar [repo] --tareas <archivo> [--correr] [--motor claude|mentira] [--con cli|mcp|ambos] [--repeticiones N] [--precios <archivo>]", descripcion: "Sin --correr, el plan de corridas (cada tarea sin y con lo generado) y su costo estimado; no copia, no escribe ni gasta. Con --correr las corre (con el motor claude, GASTA), compara rondas, tokens, costo y si terminó, y lo deja en .ax-corridas/ con la transcripción de cada corrida. --con elige qué lleva el «con»: cli (solo el CLI y una línea en la guía que apunta a ax/cli.md), mcp (CLI y MCP) o ambos (por defecto)." },
 ];
 
 type Resultado = { codigo: number; cuerpo: Record<string, unknown>; texto?: string };
@@ -165,11 +166,11 @@ function verboGenerar(argv: readonly string[]): Resultado {
 
 function verboValidar(argv: readonly string[]): Resultado {
   let positionals: string[];
-  let v: { tareas?: string; correr?: boolean; motor?: string; repeticiones?: string; precios?: string };
+  let v: { tareas?: string; correr?: boolean; motor?: string; con?: string; repeticiones?: string; precios?: string };
   try {
     const analizado = parseArgs({
       args: [...argv],
-      options: { tareas: { type: "string" }, correr: { type: "boolean" }, motor: { type: "string" }, repeticiones: { type: "string" }, precios: { type: "string" } },
+      options: { tareas: { type: "string" }, correr: { type: "boolean" }, motor: { type: "string" }, con: { type: "string" }, repeticiones: { type: "string" }, precios: { type: "string" } },
       allowPositionals: true,
       strict: true,
     });
@@ -178,12 +179,16 @@ function verboValidar(argv: readonly string[]): Resultado {
   } catch (e) {
     return usoIncorrecto(`axd validar: ${(e as Error).message}`);
   }
-  const uso = "`axd validar [repo] --tareas <archivo> [--correr] [--motor claude|mentira] [--repeticiones N] [--precios <archivo>]`";
+  const uso = "`axd validar [repo] --tareas <archivo> [--correr] [--motor claude|mentira] [--con cli|mcp|ambos] [--repeticiones N] [--precios <archivo>]`";
   if (positionals.length > 1) return usoIncorrecto(`axd validar recibe una sola ruta: ${uso}.`);
   if (v.tareas === undefined) return usoIncorrecto(`axd validar necesita --tareas con el archivo de tareas de prueba (formato en docs/validador.md): ${uso}.`);
   const nombreDelMotor = v.motor ?? "claude";
   const fabrica = MOTORES[nombreDelMotor];
   if (fabrica === undefined) return usoIncorrecto(`axd validar: --motor «${nombreDelMotor}» desconocido. Usa ${Object.keys(MOTORES).join(" o ")}.`);
+  if (v.con !== undefined && !(MODOS_CON as readonly string[]).includes(v.con)) {
+    return usoIncorrecto(`axd validar: --con «${v.con}» desconocido. Usa ${MODOS_CON.join(", ")}: cli mide solo el CLI generado, mcp el CLI y el MCP, ambos (por defecto) los dos con la línea en la guía.`);
+  }
+  const con = v.con as ModoCon | undefined;
   let repeticiones: number | undefined;
   if (v.repeticiones !== undefined) {
     if (!/^[0-9]+$/.test(v.repeticiones)) return usoIncorrecto(`axd validar: --repeticiones tiene que ser un entero mayor que 0, no «${v.repeticiones}».`);
@@ -193,8 +198,8 @@ function verboValidar(argv: readonly string[]): Resultado {
   const tareas = leerTareas(leerEntrada(v.tareas, "el archivo de tareas"));
   const tabla = v.precios === undefined ? undefined : leerPrecios(leerEntrada(v.precios, "la tabla de precios"));
   const { contrato, medicion } = contratoYMedicionDe(raiz);
-  const pedido = { raiz, tareas, medicion, contrato, motor: fabrica(), ...(repeticiones !== undefined ? { repeticiones } : {}), ...(tabla !== undefined ? { tabla } : {}) };
-  const comando = ["axd validar", raiz, "--tareas", v.tareas, ...(v.motor !== undefined ? ["--motor", v.motor] : []), ...(v.repeticiones !== undefined ? ["--repeticiones", v.repeticiones] : []), ...(v.precios !== undefined ? ["--precios", v.precios] : []), "--correr"].join(" ");
+  const pedido = { raiz, tareas, medicion, contrato, motor: fabrica(), ...(con !== undefined ? { con } : {}), ...(repeticiones !== undefined ? { repeticiones } : {}), ...(tabla !== undefined ? { tabla } : {}) };
+  const comando = ["axd validar", raiz, "--tareas", v.tareas, ...(v.motor !== undefined ? ["--motor", v.motor] : []), ...(v.con !== undefined ? ["--con", v.con] : []), ...(v.repeticiones !== undefined ? ["--repeticiones", v.repeticiones] : []), ...(v.precios !== undefined ? ["--precios", v.precios] : []), "--correr"].join(" ");
   if (v.correr !== true) {
     const plan = ensayarValidacion(pedido);
     const gasto = nombreDelMotor === "mentira" ? "no gasta nada: el motor de mentira no lanza ningún agente" : `gastaría unos ${plan.total.usd ?? "?"} USD según la estimación, y como mucho ${plan.total.usd_tope} USD (el tope de cada corrida)`;
@@ -202,7 +207,7 @@ function verboValidar(argv: readonly string[]): Resultado {
   }
   const hecho = correrValidacion(pedido, verificador());
   const fallidas = hecho.resultados.filter((r) => r.estado === "fallo-motor").length;
-  const cuerpo = { esquema: 1, ensayo: false, fecha: hecho.fecha, raiz, motor: hecho.plan.motor, modelo: hecho.plan.modelo, contrato: hecho.plan.contrato, comparacion: hecho.comparacion, resultados: hecho.resultados, escrito: hecho.escrito };
+  const cuerpo = { esquema: 1, ensayo: false, fecha: hecho.fecha, raiz, motor: hecho.plan.motor, modelo: hecho.plan.modelo, contrato: hecho.plan.contrato, con: hecho.plan.con, comparacion: hecho.comparacion, resultados: hecho.resultados, escrito: hecho.escrito };
   if (fallidas === hecho.resultados.length) {
     return { codigo: 3, cuerpo: { ...cuerpo, error: `El motor falló en las ${fallidas} corridas: no hay nada que comparar.`, salida: `Mira «detalle» en los resultados (o ${hecho.escrito.ruta}), arregla lo que diga y vuelve a correr.`, reintentable: true } };
   }

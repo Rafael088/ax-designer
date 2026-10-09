@@ -6,6 +6,8 @@
 // analizador, es texto con expresiones regulares, no un parser.
 import type { CampoDelCuerpo, CuerpoInferido, MetodoHttp, Ruta, RutaApi, TipoDeCampo } from "../modelo/index.ts";
 import { definicionesDe } from "./codigo.ts";
+import { detallesZod, documentacionDe, parametrosDeConsulta, respuestaDe } from "./manejador.ts";
+import { cadena, cierreDe, entradasDeObjeto, lineaDe } from "./texto-ts.ts";
 
 const APP_ROUTER = /(?:^|\/)app\/((?:[^/]+\/)*)route\.[cm]?[jt]sx?$/;
 const PAGES_API = /(?:^|\/)pages\/(api(?:\/[^/]+)*?)\.[cm]?[jt]sx?$/;
@@ -46,10 +48,6 @@ function caminoDe(segmentos: string[]): string | undefined {
   return "/" + partes.join("/");
 }
 
-function lineaDe(texto: string, indice: number): number {
-  return texto.slice(0, indice).split("\n").length;
-}
-
 function rutasDelAppRouter(archivo: Ruta, texto: string, camino: string): RutaApi[] {
   const vistos = new Map<Metodo, { linea: number; funcion?: string }>();
   const poner = (metodo: string, indice: number, funcion?: string) => {
@@ -72,20 +70,27 @@ function rutasDelAppRouter(archivo: Ruta, texto: string, camino: string): RutaAp
   const lineas = texto.split("\n");
   const definiciones = definicionesDe(lineas, "typescript");
   const esquemas = esquemasZod(texto);
-  const consulta = [...new Set([...texto.matchAll(/\bsearchParams\.get(?:All)?\(\s*["'`]([\w-]+)["'`]/g)].map((m) => m[1]!))].sort();
+  const detalle = parametrosDeConsulta(texto, "next-app-router", esquemas);
+  const consulta = detalle.map((p) => p.nombre);
   return METODOS.flatMap((metodo): RutaApi[] => {
     const visto = vistos.get(metodo);
     if (visto === undefined) return [];
     const rango = visto.funcion !== undefined ? definiciones.get(visto.funcion) : undefined;
     const cuerpo = metodo === "GET" || metodo === "DELETE" ? undefined : cuerpoDe(archivo, texto, lineas, esquemas, rango, vistos.size);
+    const respuesta = rango !== undefined
+      ? respuestaDe(lineas.slice(rango.linea - 1, rango.hasta).join("\n"), rango.linea, texto, metodo === "GET" ? detalle : [])
+      : undefined;
+    const doc = documentacionDe(lineas, visto.linea);
     return [{
       metodo: metodo.toLowerCase() as MetodoHttp,
       ruta: camino,
       archivo,
       linea: visto.linea,
       marco: "next-app-router",
-      ...(metodo === "GET" && consulta.length > 0 ? { consulta } : {}),
+      ...(metodo === "GET" && consulta.length > 0 ? { consulta, consulta_detalle: detalle } : {}),
       ...(cuerpo !== undefined ? { cuerpo } : {}),
+      ...(respuesta !== undefined ? { respuesta } : {}),
+      ...(doc !== undefined ? { doc } : {}),
     }];
   });
 }
@@ -103,15 +108,21 @@ function rutasDelPagesRouter(archivo: Ruta, texto: string, camino: string): Ruta
   const manejador = /^[ \t]*export\s+default\b/m.exec(texto);
   if (manejador === null) return [];
   const parametros = new Set([...camino.matchAll(/:(\w+)/g)].map((m) => m[1]!));
-  const consulta = [...new Set([
-    ...[...texto.matchAll(/\breq\.query\.(\w+)/g)].map((m) => m[1]!),
-    ...[...texto.matchAll(/\{([^{}]*)\}\s*=\s*req\.query\b/g)].flatMap((m) => m[1]!.split(",").map((p) => p.trim().split(/\s*[:=]\s*/)[0]!)),
-  ])].filter((n) => /^\w+$/.test(n) && !parametros.has(n)).sort();
   const lineas = texto.split("\n");
   const esquemas = esquemasZod(texto);
-  const base = { ruta: camino, archivo, marco: "next-pages-router" as const };
+  const detalle = parametrosDeConsulta(texto, "next-pages-router", esquemas, parametros);
+  const consulta = detalle.map((p) => p.nombre);
+  // La respuesta solo se sabe de qué método es si el manejador atiende uno solo.
+  const lineaDelManejador = lineaDe(texto, manejador.index);
+  const respuestaUnica = metodos.size <= 1 ? respuestaDe(texto, 1, texto, detalle) : undefined;
+  const doc = documentacionDe(lineas, lineaDelManejador);
+  const base = {
+    ruta: camino, archivo, marco: "next-pages-router" as const,
+    ...(respuestaUnica !== undefined ? { respuesta: respuestaUnica } : {}),
+    ...(doc !== undefined ? { doc } : {}),
+  };
   // Sin un `req.method` comparado con un literal, el manejador atiende cualquier método.
-  if (metodos.size === 0) return [{ ...base, metodo: "all", linea: lineaDe(texto, manejador.index) }];
+  if (metodos.size === 0) return [{ ...base, metodo: "all", linea: lineaDelManejador, ...(consulta.length > 0 ? { consulta, consulta_detalle: detalle } : {}) }];
   return METODOS.flatMap((metodo): RutaApi[] => {
     const linea = metodos.get(metodo);
     if (linea === undefined) return [];
@@ -121,7 +132,7 @@ function rutasDelPagesRouter(archivo: Ruta, texto: string, camino: string): Ruta
       ...base,
       metodo: metodo.toLowerCase() as MetodoHttp,
       linea,
-      ...(metodo === "GET" && consulta.length > 0 ? { consulta } : {}),
+      ...(metodo === "GET" && consulta.length > 0 ? { consulta, consulta_detalle: detalle } : {}),
       ...(cuerpo !== undefined ? { cuerpo } : {}),
     }];
   });
@@ -142,16 +153,23 @@ function cuerpoDe(
 ): CuerpoInferido | undefined {
   const tramo = rango !== undefined ? lineas.slice(rango.linea - 1, rango.hasta).join("\n") : escrituras === 1 ? texto : undefined;
   if (tramo === undefined) return undefined;
+  const comoCuerpo = (esquema: EsquemaZod, parcial: boolean): CuerpoInferido => ({
+    origen: "zod",
+    nombre: esquema.nombre,
+    desde: { archivo, linea: esquema.linea },
+    campos: esquema.campos.map((c) => (parcial ? { ...c, requerido: false } : c)),
+  });
   for (const m of tramo.matchAll(/\b(\w+)((?:\.\w+\(\))*)\.(?:safeParse|parse)(?:Async)?\(/g)) {
     const esquema = esquemas.get(m[1]!);
     if (esquema === undefined) continue;
-    const parcial = esquema.parcial || /\.partial\(\)/.test(m[2]!);
-    return {
-      origen: "zod",
-      nombre: esquema.nombre,
-      desde: { archivo, linea: esquema.linea },
-      campos: esquema.campos.map((c) => (parcial ? { ...c, requerido: false } : c)),
-    };
+    return comoCuerpo(esquema, esquema.parcial || /\.partial\(\)/.test(m[2]!));
+  }
+  // Sin parse a la vista, el esquema que se pasa a un ayudante que lee el cuerpo (`leerCuerpo(req, ventaSchema)`), si es uno solo.
+  const pasados = [...new Set([...tramo.matchAll(/\(\s*\w+\s*,\s*(\w+)((?:\.\w+\(\))*)\s*\)/g)].filter((m) => esquemas.has(m[1]!)).map((m) => `${m[1]}${m[2]}`))];
+  if (pasados.length === 1) {
+    const [, nombre, cadenaDeLlamadas] = /^(\w+)(.*)$/.exec(pasados[0]!)!;
+    const esquema = esquemas.get(nombre!)!;
+    return comoCuerpo(esquema, esquema.parcial || /\.partial\(\)/.test(cadenaDeLlamadas!));
   }
   return undefined;
 }
@@ -174,81 +192,13 @@ export function esquemasZod(texto: string): Map<string, EsquemaZod> {
   return esquemas;
 }
 
-/** El índice de la llave, corchete o paréntesis que cierra el que abre en `abre`, saltando cadenas. */
-function cierreDe(texto: string, abre: number): number | undefined {
-  let profundidad = 0;
-  let comilla: string | undefined;
-  for (let i = abre; i < texto.length; i++) {
-    const c = texto[i]!;
-    if (comilla !== undefined) {
-      if (c === "\\") i++;
-      else if (c === comilla) comilla = undefined;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") comilla = c;
-    else if (c === "/" && texto[i + 1] === "/") i = texto.indexOf("\n", i) === -1 ? texto.length : texto.indexOf("\n", i);
-    else if (c === "{" || c === "(" || c === "[") profundidad++;
-    else if (c === "}" || c === ")" || c === "]") {
-      profundidad--;
-      if (profundidad === 0) return i;
-    }
-  }
-  return undefined;
-}
-
-/** Parte el cuerpo de un objeto por las comas de primer nivel. */
-function entradasDeObjeto(cuerpo: string): string[] {
-  const partes: string[] = [];
-  let profundidad = 0;
-  let comilla: string | undefined;
-  let actual = "";
-  for (let i = 0; i < cuerpo.length; i++) {
-    const c = cuerpo[i]!;
-    if (comilla !== undefined) {
-      actual += c;
-      if (c === "\\") actual += cuerpo[++i] ?? "";
-      else if (c === comilla) comilla = undefined;
-      continue;
-    }
-    if (c === "/" && cuerpo[i + 1] === "/") {
-      const fin = cuerpo.indexOf("\n", i);
-      i = fin === -1 ? cuerpo.length : fin;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") comilla = c;
-    else if (c === "{" || c === "(" || c === "[") profundidad++;
-    else if (c === "}" || c === ")" || c === "]") profundidad--;
-    if (c === "," && profundidad === 0) {
-      partes.push(actual);
-      actual = "";
-    } else actual += c;
-  }
-  partes.push(actual);
-  return partes.map((p) => p.trim()).filter(Boolean);
-}
-
-/** La cadena de llamadas de primer nivel de una expresión, sin lo de dentro de los paréntesis. */
-function cadena(expresion: string): string {
-  let salida = "";
-  let profundidad = 0;
-  for (const c of expresion) {
-    if (c === "(" || c === "[" || c === "{") {
-      if (profundidad === 0) salida += c;
-      profundidad++;
-    } else if (c === ")" || c === "]" || c === "}") {
-      profundidad--;
-      if (profundidad === 0) salida += c;
-    } else if (profundidad === 0) salida += c;
-  }
-  return salida.replace(/\s+/g, "");
-}
-
 function camposZod(cuerpo: string, previos: Map<string, EsquemaZod>): CampoDelCuerpo[] {
   return entradasDeObjeto(cuerpo).flatMap((entrada): CampoDelCuerpo[] => {
     const m = /^["']?([\w$]+)["']?\s*:\s*([\s\S]+)$/.exec(entrada);
     if (!m) return [];
     const llamadas = cadena(m[2]!);
-    return [{ nombre: m[1]!, tipo: tipoZod(llamadas, previos), requerido: !/\.(optional|nullish|default|catch)\(/.test(llamadas) && !/^z\.(optional|undefined)\(/.test(llamadas) }];
+    const tipo = tipoZod(llamadas, previos);
+    return [{ nombre: m[1]!, tipo, requerido: !/\.(optional|nullish|default|catch)\(/.test(llamadas) && !/^z\.(optional|undefined)\(/.test(llamadas), ...detallesZod(m[2]!, tipo) }];
   });
 }
 

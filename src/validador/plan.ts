@@ -1,7 +1,7 @@
 // El plan: cada tarea × {sin, con} × repeticiones, con su estimación. Las variantes se alternan
 // dentro de cada repetición para que un cambio del motor a mitad de camino (caché, carga) no caiga
 // todo del mismo lado.
-import type { TareasDePrueba, Contrato, CorridaPlaneada, Medicion, PlanDeCorridas, TablaDePrecios } from "../modelo/index.ts";
+import type { TareasDePrueba, Contrato, CorridaPlaneada, Medicion, ModoCon, PlanDeCorridas, TablaDePrecios } from "../modelo/index.ts";
 import { VARIANTES } from "../modelo/index.ts";
 import { CARACTERES_POR_TOKEN } from "../medicion/index.ts";
 import { FORMULA, estimar } from "./estimacion.ts";
@@ -13,6 +13,8 @@ export type OpcionesDelPlan = {
   repeticiones: number;
   ensayo: boolean;
   tabla: TablaDePrecios;
+  /** Qué lleva la copia «con»; por defecto, ambos. */
+  con?: ModoCon;
 };
 
 export function armarPlan(tareas: TareasDePrueba, medicion: Medicion, contrato: Contrato, opciones: OpcionesDelPlan): PlanDeCorridas {
@@ -22,7 +24,7 @@ export function armarPlan(tareas: TareasDePrueba, medicion: Medicion, contrato: 
     for (let repeticion = 1; repeticion <= opciones.repeticiones; repeticion++) {
       const orden = repeticion % 2 === 1 ? VARIANTES : [...VARIANTES].reverse();
       for (const variante of orden) {
-        corridas.push({ id: `${tarea.id}/${variante}/${repeticion}`, tarea: tarea.id, variante, repeticion, estimacion: estimar(tarea, variante, medicion, contrato, opciones.tabla, precio) });
+        corridas.push({ id: `${tarea.id}/${variante}/${repeticion}`, tarea: tarea.id, variante, repeticion, estimacion: estimar(tarea, variante, medicion, contrato, opciones.tabla, precio, opciones.con ?? "ambos") });
       }
     }
   }
@@ -39,6 +41,7 @@ export function armarPlan(tareas: TareasDePrueba, medicion: Medicion, contrato: 
     modelo: tareas.modelo,
     repeticiones: opciones.repeticiones,
     contrato: contrato.huella,
+    con: opciones.con ?? "ambos",
     corridas,
     total: {
       corridas: corridas.length,

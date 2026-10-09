@@ -690,6 +690,22 @@ def ejecutar(verbo, valores, argv):
     return sin_implementar(verbo)
 
 
+def ayuda_de_verbo(verbo):
+    def marca(e):
+        return "<" + e["nombre"] + ">" if e["como"] == "posicional" else e["bandera"]
+
+    def con_valor(e):
+        return marca(e) + ("" if e["como"] == "posicional" or e["tipo"] == "booleano" else "=…")
+
+    return {
+        "esquema": 1, "verbo": verbo["nombre"], "tipo": verbo["tipo"], "descripcion": verbo["descripcion"],
+        "uso": " ".join([PROGRAMA, verbo["nombre"]] + [con_valor(e) for e in verbo["entradas"]]),
+        "entradas": [{"entrada": marca(e), "requerida": e["requerida"], "descripcion": e["descripcion"]} for e in verbo["entradas"]],
+        "implementado": verbo["implementacion"]["tipo"] != "sin-implementar",
+        "salida": "Llama a «" + PROGRAMA + " " + verbo["nombre"] + "» con esas entradas.",
+    }
+
+
 def ayuda():
     def entrada(e):
         base = "<" + e["nombre"] + ">" if e["como"] == "posicional" else e["bandera"] + ("" if e["tipo"] == "booleano" else "=…")
@@ -702,6 +718,7 @@ def ayuda():
                     "implementado": v["implementacion"]["tipo"] != "sin-implementar"} for v in DATOS["verbos"]],
         "vedadas": [v["nombre"] for v in DATOS["vedadas"]],
         "codigos": DATOS["codigos"],
+        "detalle": PROGRAMA + " <verbo> --help: sus entradas con su descripción (valor por defecto, topes, valores).",
         "salida": salida_de_la_ayuda(),
     }
     if DATOS["http"]:
@@ -731,6 +748,8 @@ def principal(argv):
         if vedada is not None:
             raise Fallo(5, "«" + nombre + "» no es un verbo: es una transición vedada al agente. " + vedada["que"] + " " + vedada["motivo"], "No la reintentes: es de una persona; pídesela.")
         raise uso("No hay ningún verbo «" + nombre + "». Los verbos son: " + ", ".join(v["nombre"] for v in DATOS["verbos"]) + ".")
+    if "--help" in resto or "-h" in resto:
+        return ayuda_de_verbo(verbo)
     return ejecutar(verbo, parsear(verbo, resto), resto)
 
 

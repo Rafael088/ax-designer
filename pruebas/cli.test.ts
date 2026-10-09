@@ -249,6 +249,19 @@ test("validar sin --correr es el ensayo: el plan con su costo estimado, sin escr
   assert.ok(!existsSync(join(repo, ".ax-corridas")), "el ensayo no escribe");
 });
 
+test("validar --con cli: el plan lo dice y el «con» estima leer ax/cli.md en vez de las tools del MCP", () => {
+  const { codigo, json } = axd("validar", NODE_CLI, "--tareas", TAREAS, "--motor", "mentira", "--con", "cli");
+  assert.equal(codigo, 0, JSON.stringify(json));
+  assert.equal(json["con"], "cli");
+  assert.match(json["salida"] as string, /--con cli --correr/);
+  const con = (json["corridas"] as { variante: string; estimacion: { lecturas: { que: string }[] } }[]).find((c) => c.variante === "con")!;
+  const lecturas = con.estimacion.lecturas.map((l) => l.que).join(" | ");
+  assert.match(lecturas, /ax\/cli\.md, una vez/);
+  assert.match(lecturas, /línea de la guía/);
+  assert.doesNotMatch(lecturas, /tools del MCP/);
+  assert.equal(axd("validar", NODE_CLI, "--tareas", TAREAS, "--motor", "mentira").json["con"], "ambos", "por defecto, ambos");
+});
+
 test("validar: los errores de uso salen con 2", () => {
   const casos: [string[], RegExp][] = [
     [["validar", NODE_CLI], /--tareas/],
@@ -258,6 +271,7 @@ test("validar: los errores de uso salen con 2", () => {
     [["validar", NODE_CLI, "--tareas", join(RAIZ, "no-existe.json")], /archivo de tareas/],
     [["validar", NODE_CLI, "--tareas", join(RAIZ, "package.json")], /esquema/],
     [["validar", NODE_CLI, "otro", "--tareas", TAREAS], /una sola ruta/],
+    [["validar", NODE_CLI, "--tareas", TAREAS, "--con", "todo"], /--con «todo».*cli, mcp, ambos/],
   ];
   for (const [argumentos, mensaje] of casos) {
     const { codigo, json } = axd(...argumentos);

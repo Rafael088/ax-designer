@@ -32,7 +32,7 @@ function queHace(impl: Implementacion): string {
     case "anexar":
       return `Anexa a \`${impl.destino}\` un registro \`${impl.evento}\` con ${impl.campos.length > 0 ? impl.campos.map((c) => `\`${c}\``).join(", ") + " y " : ""}la fecha${impl.existe ? `, si existe en \`${impl.existe.coleccion}\` un registro con ese \`${impl.existe.campo}\`` : ""}.`;
     case "http":
-      return `Llama a \`${impl.metodo} ${impl.ruta}\` en la URL base${impl.cuerpo !== null ? ` con \`--cuerpo\` como JSON${impl.cuerpo.forma === null ? " (sin validar: no se supo su forma)" : ` (campos de \`${impl.cuerpo.forma.nombre}\`)`}` : ""}.`;
+      return `Petición \`${impl.metodo} ${impl.ruta}\` a la URL base${impl.cuerpo !== null ? ` con \`--cuerpo\` como JSON${impl.cuerpo.forma === null ? " (sin validar: no se supo su forma)" : ` (campos de \`${impl.cuerpo.forma.nombre}\`)`}` : ""}.`;
     case "sin-implementar":
       return `**Sin implementar: sale con 5.** Falta: ${impl.falta}`;
   }
@@ -81,12 +81,22 @@ function plantillaDeLeemeDelCli(contrato: Contrato): string {
     "",
     "## Verbos",
     "",
-    "`*` es una entrada requerida.",
+    `\`*\` es una entrada requerida. El detalle de cada uno está abajo y en \`${programa} <verbo> --help\`.`,
     "",
     "| Verbo | Tipo | Entradas | Qué hace |",
     "| --- | --- | --- | --- |",
     ...filas,
     "",
+    "## Detalle de los verbos",
+    "",
+    ...contrato.verbos.flatMap((v) => [
+      `### \`${v.nombre}\``,
+      "",
+      v.descripcion,
+      "",
+      ...v.entradas.map((e) => `- \`${e.como === "posicional" ? `<${e.nombre}>` : e.bandera!}\`${e.requerida ? " (requerida)" : ""}: ${e.descripcion}`),
+      ...(v.entradas.length > 0 ? [""] : []),
+    ]),
     `La huella: ${contrato.dominio.huella} Fuentes: ${contrato.dominio.fuentes.map((f) => `\`${f.ruta}\``).join(", ") || "ninguna"}.`,
     "",
     ...(pendientes.length > 0

@@ -142,11 +142,100 @@ export type RutaApi = Ubicacion & {
   consulta?: string[];
   /** El cuerpo JSON que valida el manejador, sacado del esquema zod que usa. Solo si se vio uno. */
   cuerpo?: CuerpoInferido;
+  /**
+   * Lo que se vio de cada parámetro de `consulta` (en el mismo orden): cómo lo convierte el
+   * manejador, su valor por defecto, sus topes y con qué valores lo compara. Solo si hay consulta.
+   */
+  consulta_detalle?: ParametroDeConsulta[];
+  /** Lo que devuelve el manejador cuando sale bien, sacado de su `return`. Solo si se vio. */
+  respuesta?: RespuestaInferida;
+  /** El comentario de documentación (JSDoc) justo encima del manejador, sin los delimitadores. */
+  doc?: string;
+};
+
+/** Lo que se vio de un parámetro de consulta en el código del manejador. Lo que no se vio, falta. */
+export type ParametroDeConsulta = {
+  nombre: string;
+  /** La línea donde se lee. */
+  linea: number;
+  /** Cómo lo convierte el manejador: `Number()` es número, `parseInt()` o zod `.int()` entero. */
+  tipo?: TipoDeCampo;
+  /** El valor que toma si no viene (`|| 30`, `?? "todas"`, `.default(30)`, `{ dias = 30 }`). */
+  por_defecto?: string | number | boolean;
+  /** Topes: `Math.max(…, 1)` es el mínimo y `Math.min(…, 200)` el máximo; en zod, `.min()` y `.max()`. */
+  minimo?: number;
+  maximo?: number;
+  /** Los valores literales con los que lo compara (`estado === "pagada"`) o los de su `z.enum([…])`. */
+  valores?: string[];
+  /** Solo si el esquema zod que lo valida lo exige (sin `.optional()` ni `.default()`). */
+  requerido?: boolean;
+  /** La variable local que lo guarda (`const limite = …`): sirve para seguirlo en la respuesta. */
+  variable?: string;
+  /** Si la variable entra en el `where` de una consulta de Prisma: filtra lo que se devuelve. */
+  filtra?: boolean;
+};
+
+/**
+ * Un periodo de fechas que se vio en el código, en días respecto del inicio de hoy: `desde` es el
+ * primer día (0 hoy, -6 hace seis días) y `hasta` el día en que acaba, sin incluirlo (1 es hasta el
+ * final de hoy; null, hasta ahora). Con `parametro`, son los últimos «parametro» días.
+ */
+export type PeriodoInferido = { desde: number; hasta: number | null; parametro?: string; expresion: string };
+
+/** Una consulta de Prisma de la que sale (parte de) la respuesta. */
+export type ConsultaPrisma = {
+  /** El delegado tal como se escribe (`venta`, `facturaProveedor`): el modelo, en minúscula inicial. */
+  modelo: string;
+  operacion: string;
+  /** `orderBy`, como `campo asc|desc`. */
+  orden?: string[];
+  /** `take`: un número o el nombre del parámetro de consulta que lo fija. */
+  tope?: number | string;
+  /** Las relaciones de `include`. */
+  incluye?: string[];
+  /** `by` de un groupBy. */
+  agrupa?: string[];
+};
+
+/** Una clave de la respuesta y lo que se pudo seguir de su valor. */
+export type ClaveDeRespuesta = {
+  nombre: string;
+  /** Si su valor es un objeto literal, sus claves. */
+  claves?: ClaveDeRespuesta[];
+  periodo?: PeriodoInferido;
+  consulta?: ConsultaPrisma;
+};
+
+/** Lo que devuelve el manejador al salir bien: un objeto con claves, o lo que da una consulta de Prisma. */
+export type RespuestaInferida = {
+  linea: number;
+  /** objeto: un literal con `claves`. lista/registro: lo que devuelve `consulta`. desconocida: no se pudo seguir. */
+  forma: "objeto" | "lista" | "registro" | "desconocida";
+  claves?: ClaveDeRespuesta[];
+  consulta?: ConsultaPrisma;
+  periodo?: PeriodoInferido;
+  /** Claves que el manejador añade a cada elemento de la lista (`.map((f) => ({ ...f, vencida }))`). */
+  anade?: string[];
+  /** El código HTTP con que responde, si se ve (`ok(venta, 201)`). */
+  estado?: number;
 };
 
 export type TipoDeCampo = "texto" | "numero" | "entero" | "booleano" | "fecha" | "lista" | "objeto" | "otro";
 
-export type CampoDelCuerpo = { nombre: string; tipo: TipoDeCampo; requerido: boolean };
+export type CampoDelCuerpo = {
+  nombre: string;
+  tipo: TipoDeCampo;
+  requerido: boolean;
+  /** `.default(x)` de zod o `@default(x)` de Prisma. Solo si se vio. */
+  por_defecto?: string | number | boolean;
+  /** `.min()`/`.max()` de zod: el valor en números, el largo en textos, los elementos en listas. */
+  minimo?: number;
+  maximo?: number;
+  /** Los valores de un `z.enum([…])` literal. */
+  valores?: string[];
+  /** El nombre de la lista de valores cuando el enum no es literal (`z.enum(METODOS_PAGO)`). */
+  valores_de?: string;
+};
 
 /** Lo que se pudo inferir del cuerpo JSON de una petición, y de dónde. */
 export type CuerpoInferido = {

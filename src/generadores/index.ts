@@ -5,10 +5,10 @@ import { aplicar, ensayar, exigirSinNegados, type Aplicado, type ArchivoGenerado
 import { archivosCli } from "./cli/index.ts";
 import { archivosMcp } from "./mcp/index.ts";
 
-export { CARPETA_DE_CORRIDAS, CARPETA_GENERADA, aplicar, borrarCarpetaTemporal, crearCarpetaTemporal, escribirCopia, escribirCorrida, conCabecera, ensayar, esGeneradoPorAxd, exigirSinNegados, leerCabecera } from "./escritor.ts";
+export { CARPETA_DE_CORRIDAS, CARPETA_GENERADA, anexarALaGuia, aplicar, borrarCarpetaTemporal, crearCarpetaTemporal, escribirCopia, escribirCorrida, escribirTranscripcion, conCabecera, ensayar, esGeneradoPorAxd, exigirSinNegados, leerCabecera } from "./escritor.ts";
 export type { Aplicado, ArchivoGenerado, Escrito, Plan, PasoDelPlan } from "./escritor.ts";
 export { archivosMcp, esquemaDeEntrada } from "./mcp/index.ts";
-export { archivosCli, datosDelCli } from "./cli/index.ts";
+export { archivosCli, datosDelCli, RUTA_DEL_LEEME_DEL_CLI } from "./cli/index.ts";
 
 export type Generador = "cli" | "mcp";
 

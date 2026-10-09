@@ -1,7 +1,7 @@
 // Lo que el validador le pide a un motor. Las implementaciones viven en motores/, lo único de axd
 // que lanza procesos; esta interfaz no hace E/S, así que el resto del validador se prueba con un
 // motor de mentira sin lanzar nada.
-import type { CorridaPlaneada, CriterioDeTerminado, Presupuesto, SalidaDelMotor } from "../modelo/index.ts";
+import type { CorridaPlaneada, CriterioDeTerminado, Presupuesto, Ruta, SalidaDelMotor } from "../modelo/index.ts";
 
 export type PedidoDeCorrida = {
   corrida: CorridaPlaneada;
@@ -21,8 +21,10 @@ export type NoDisponible = { error: string; salida: string };
 
 export interface Motor {
   readonly nombre: string;
-  /** null si puede correr. No lanza nada caro: solo mira si está lo que hace falta. */
-  disponible(variantes: { con: boolean }): NoDisponible | null;
+  /** La guía que el agente del motor carga solo al entrar (CLAUDE.md para claude): ahí va la línea que apunta a ax/cli.md. */
+  readonly guia: Ruta;
+  /** null si puede correr. No lanza nada caro: solo mira si está lo que hace falta (`mcp`: el «con» lleva el MCP generado). */
+  disponible(variantes: { con: boolean; mcp?: boolean }): NoDisponible | null;
   /** Lo que la copia «con» necesita antes de las corridas (instalar el SDK del MCP generado). Lanza ErrorAx si falla. */
   prepararCon(copia: string): void;
   /** Una corrida. No lanza: un fallo vuelve como `{ ok: false }`. */

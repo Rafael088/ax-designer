@@ -1,6 +1,6 @@
 {
   "name": "ax-designer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Audita la Agent Experience (AX) de un repositorio y genera el código (CLI de verbos estrechos y MCP server) para que un agente lo opere con menos tokens, menos rondas y menos errores.",
   "license": "MIT",
   "author": "Rafael Aguirre",
