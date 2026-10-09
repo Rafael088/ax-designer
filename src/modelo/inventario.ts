@@ -129,7 +129,33 @@ export type Manejador = {
 
 export type MetodoHttp = "get" | "post" | "put" | "patch" | "delete" | "all";
 
-export type RutaApi = Ubicacion & { metodo: MetodoHttp; ruta: string };
+/**
+ * Una ruta HTTP. `ruta` va en estilo Express: `:id` para un segmento dinámico, `:slug*` para el
+ * resto de la ruta (`[...slug]` de Next) y `:slug*?` si ese resto es opcional (`[[...slug]]`).
+ */
+export type RutaApi = Ubicacion & {
+  metodo: MetodoHttp;
+  ruta: string;
+  /** De dónde sale la ruta cuando no se declara llamando a un router: en Next, el archivo es la ruta. */
+  marco?: "next-app-router" | "next-pages-router";
+  /** Parámetros de consulta que lee el manejador (`searchParams.get("q")`, `req.query.q`). Solo si hay alguno. */
+  consulta?: string[];
+  /** El cuerpo JSON que valida el manejador, sacado del esquema zod que usa. Solo si se vio uno. */
+  cuerpo?: CuerpoInferido;
+};
+
+export type TipoDeCampo = "texto" | "numero" | "entero" | "booleano" | "fecha" | "lista" | "objeto" | "otro";
+
+export type CampoDelCuerpo = { nombre: string; tipo: TipoDeCampo; requerido: boolean };
+
+/** Lo que se pudo inferir del cuerpo JSON de una petición, y de dónde. */
+export type CuerpoInferido = {
+  origen: "zod" | "prisma";
+  /** El esquema zod (`esquemaOrden`) o el modelo de Prisma (`Producto`). */
+  nombre: string;
+  desde: Ubicacion;
+  campos: CampoDelCuerpo[];
+};
 
 export type ToolMcp = Ubicacion & { nombre: string };
 
@@ -151,7 +177,7 @@ export type Mcp = {
   sdk: string[];
 };
 
-export type FormatoDeDatos = "json" | "jsonl" | "yaml" | "toml" | "csv" | "markdown" | "sqlite" | "otro";
+export type FormatoDeDatos = "json" | "jsonl" | "yaml" | "toml" | "csv" | "markdown" | "sqlite" | "prisma" | "otro";
 
 /** Dominio: el estado del negocio. Interfaz: preferencias y estado de pantalla. */
 export type RolDeEstado = "dominio" | "interfaz" | "desconocido";
@@ -170,6 +196,32 @@ export type ArchivoDeEstado = {
   claves?: string[];
   /** Registros, para JSONL y CSV. */
   registros?: number;
+  /** Los modelos de un esquema de Prisma: el estado vive en la base de datos, esto es su forma. */
+  modelos?: ModeloDeDatos[];
+};
+
+export type ModeloDeDatos = {
+  nombre: string;
+  linea: number;
+  /** La tabla de `@@map("…")`, si la renombra. */
+  tabla?: string;
+  campos: CampoDelModelo[];
+};
+
+export type CampoDelModelo = {
+  nombre: string;
+  /** El tipo tal cual (`String`, `Int`, `Categoria`), sin `?` ni `[]`. */
+  tipo: string;
+  lista: boolean;
+  opcional: boolean;
+  /** Lo genera la base o Prisma: `@id @default(…)`, `@default(…)`, `@updatedAt`. */
+  por_defecto: boolean;
+  id: boolean;
+  /** El tipo es otro modelo: una relación, no una columna. */
+  relacion: boolean;
+  /** El tipo es un `enum` del esquema: en JSON va como texto. */
+  enumerado: boolean;
+  linea: number;
 };
 
 export type ArchivoDeContrato = {

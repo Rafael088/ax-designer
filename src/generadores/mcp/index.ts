@@ -29,7 +29,9 @@ export function esquemaDeEntrada(verbo: VerboDelContrato): Record<string, unknow
 
 function descripcionDeTool(verbo: VerboDelContrato): string {
   const partes = [verbo.descripcion];
-  if (verbo.ensayo_por_defecto) partes.push("Sin aplicar=true es un ensayo; pasa la huella de la última lectura.");
+  if (verbo.ensayo_por_defecto) {
+    partes.push(verbo.implementacion.tipo === "http" ? "Sin aplicar=true es un ensayo que dice qué petición haría." : "Sin aplicar=true es un ensayo; pasa la huella de la última lectura.");
+  }
   if (verbo.evidencia.exige.length > 0) partes.push(`Exige ${verbo.evidencia.exige.join(", ")}.`);
   const reintento = verbo.errores.find((e) => e.reintentable);
   if (reintento !== undefined) partes.push(`Si sale con ${reintento.codigo}: ${reintento.salida}`);
@@ -40,6 +42,8 @@ function herramientaDe(verbo: VerboDelContrato) {
   return {
     nombre: verbo.nombre,
     tipo: verbo.tipo,
+    /** Llama a un servidor HTTP: lo que pasa ahí no lo controla el repo (openWorldHint). */
+    abierta: verbo.implementacion.tipo === "http",
     descripcion: descripcionDeTool(verbo),
     argv: verbo.argv,
     entradas: verbo.entradas.map(({ nombre, tipo, requerida, descripcion, como, posicion, bandera }) => ({ nombre, tipo, requerida, descripcion, como, posicion, bandera })),
@@ -51,7 +55,12 @@ function instrucciones(contrato: Contrato): string {
   const lectura = contrato.lecturas.find((l) => l.presupuesto_tokens === Math.min(...contrato.lecturas.map((x) => x.presupuesto_tokens)));
   const partes = [`Tools de ${contrato.proyecto.nombre}, una por verbo de su contrato de AX (ax/contrato.json); cada una corre su CLI y devuelve JSON.`];
   if (lectura !== undefined) partes.push(`Empieza por «${lectura.verbo}»: es la lectura barata y trae la huella.`);
-  if (contrato.verbos.some((v) => v.ensayo_por_defecto)) partes.push("Las de escritura son un ensayo hasta que pases aplicar=true; pásales la huella de la última lectura y, si salen con 4, vuelve a leer.");
+  if (contrato.verbos.some((v) => v.ensayo_por_defecto && v.implementacion.tipo !== "http")) {
+    partes.push("Las de escritura son un ensayo hasta que pases aplicar=true; pásales la huella de la última lectura y, si salen con 4, vuelve a leer.");
+  } else if (contrato.verbos.some((v) => v.ensayo_por_defecto)) {
+    partes.push("Las de escritura son un ensayo hasta que pases aplicar=true; si salen con 4, vuelve a leer.");
+  }
+  if (contrato.http !== undefined) partes.push(`Las tools llaman a la API HTTP del repo en ${contrato.http.base_url.variable} (por defecto ${contrato.http.base_url.por_defecto}): si salen con 3 reintentable, comprueba que el servidor está levantado.`);
   if (contrato.vedadas.length > 0) partes.push(`No hay tools para ${contrato.vedadas.map((v) => v.nombre).join(", ")}: son de una persona.`);
   return partes.join(" ");
 }

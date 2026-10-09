@@ -27,6 +27,8 @@ export type DatosDelCli = {
   relectura: string | null;
   /** El presupuesto del estado nuevo que devuelven las escrituras: el de la lectura más barata. */
   presupuesto_del_estado_nuevo: number;
+  /** Dónde está el servidor al que llaman los verbos HTTP; null si no hay ninguno. */
+  http: NonNullable<Contrato["http"]> | null;
 };
 
 const PRESUPUESTO_POR_DEFECTO = 500;
@@ -55,5 +57,6 @@ export function datosDelCli(contrato: Contrato): DatosDelCli {
     codigos: contrato.codigos,
     relectura: resumen ?? lectura ?? null,
     presupuesto_del_estado_nuevo: Number.isFinite(minimo) ? minimo : PRESUPUESTO_POR_DEFECTO,
+    http: contrato.http ?? null,
   };
 }

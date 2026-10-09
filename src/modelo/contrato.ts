@@ -6,7 +6,7 @@
 // Es datos planos y serializables: `axd contrato` lo imprime tal cual y los generadores lo copian
 // a `ax/contrato.json` del repo objetivo. Las claves se agregan, nunca se renombran.
 
-import type { FormatoDeDatos, Lenguaje, Ruta, Ubicacion } from "./inventario.ts";
+import type { CuerpoInferido, FormatoDeDatos, Lenguaje, Ruta, Ubicacion } from "./inventario.ts";
 
 export type Contrato = {
   esquema: 1;
@@ -29,6 +29,15 @@ export type Contrato = {
   atiende: Atencion[];
   /** Lo que se aproximó con heurísticas y conviene que una persona revise. */
   notas: string[];
+  /** Solo si algún verbo llama a la API HTTP del repo: dónde está el servidor al que llama el CLI. */
+  http?: HttpDelContrato;
+};
+
+export type HttpDelContrato = {
+  /** La URL base: la variable de entorno que la cambia y el valor que toma si no está. */
+  base_url: { variable: string; por_defecto: string; motivo: string };
+  /** Cuánto espera el CLI cada respuesta, y la variable que lo cambia. */
+  espera_ms: { variable: string; por_defecto: number };
 };
 
 export type CodigoDelCli = "0" | "2" | "3" | "4" | "5";
@@ -130,6 +139,22 @@ export type Implementacion =
    * Con `existe`, antes comprueba que hay un registro en `coleccion` con `campo` igual a la entrada.
    */
   | { tipo: "anexar"; destino: Ruta; evento: string; campos: string[]; existe?: { entrada: string; coleccion: Ruta; campo: string } }
+  /**
+   * Llama a una ruta de la API HTTP del repo en `base_url` (contrato.http): `ruta` con cada
+   * `parametros[].entrada` en su segmento (`resto`: puede llevar varios segmentos), las entradas de
+   * `consulta` como parámetros de consulta y, si hay `cuerpo`, la entrada `cuerpo` como JSON.
+   * Las escrituras son un ensayo que dice qué petición haría hasta `--aplicar`.
+   */
+  | {
+    tipo: "http";
+    metodo: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    ruta: string;
+    parametros: { entrada: string; segmento: string; resto: boolean }[];
+    /** Las entradas que van como parámetros de consulta (`?parametro=valor`). */
+    consulta: { entrada: string; parametro: string }[];
+    /** Null si el método no lleva cuerpo. `forma` null: lleva cuerpo, pero no se supo cuál. */
+    cuerpo: { entrada: string; forma: CuerpoInferido | null } | null;
+  }
   | { tipo: "sin-implementar"; falta: string; salida: string };
 
 export type Lectura = {

@@ -5,6 +5,7 @@ import { posix } from "node:path";
 import type {
   Lenguaje, MetodoHttp, Modulo, Ruta, RutaApi, Senal, TipoDeSenal, ToolMcp, VerboCli, ViaDeVerbo,
 } from "../modelo/index.ts";
+import { rutasNext } from "./next.ts";
 
 export type CodigoLeido = {
   modulo: Modulo;
@@ -68,7 +69,7 @@ export function leerCodigo(ruta: Ruta, lenguaje: Lenguaje, texto: string, existe
     yargs: libreria(/^yargs\b/),
     switch: esEntrada || principal !== undefined || (!esGeneradorOPlantilla && /(^|\/)(cli|bin|comandos|commands)(\/|\.)/.test(ruta)),
   });
-  const api = rutasApi(ruta, lineas, lenguaje);
+  const api = lenguaje === "python" ? rutasApi(ruta, lineas, lenguaje) : [...rutasApi(ruta, lineas, lenguaje), ...rutasNext(ruta, texto)];
   const tools = toolsMcp(ruta, lineas, lenguaje);
   const parseaArgv = libreria(/^(argparse|click|typer|commander|yargs|node:util|util|cac|meow|minimist|clipanion|docopt)$/);
   const conBanderas = verbos.length > 0 || esEntrada || principal !== undefined || parseaArgv;

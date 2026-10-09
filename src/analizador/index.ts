@@ -8,6 +8,7 @@ import {
 import { GUIAS_BUSCADAS, leerGuia, tipoDeGuia } from "./guias.ts";
 import { LENGUAJES_CON_SOPORTE, lenguajeDe } from "./lenguajes.ts";
 import type { Lector } from "./lector.ts";
+import { esEsquemaPrisma, modelosPrisma } from "./prisma.ts";
 import { MANIFIESTOS_BUSCADOS, leerManifiesto, tipoDeManifiesto } from "./manifiestos.ts";
 import { CARPETAS_IGNORADAS, estructuraDe, recorrer, type ArchivoVisto } from "./recorrido.ts";
 
@@ -157,6 +158,22 @@ export function analizar(lector: Lector, opciones: OpcionesDeAnalisis = {}): Inv
     }
     const clase = prueba ? undefined : clasificarEstado(archivo);
     if (clase) inventario.estado.push(leerEstado(archivo, clase, clase.formato === "sqlite" ? undefined : leer(archivo)));
+    if (!prueba && esEsquemaPrisma(archivo.ruta)) {
+      const texto = leer(archivo);
+      const modelos = texto === undefined ? [] : modelosPrisma(texto);
+      if (modelos.length > 0) {
+        inventario.estado.push({
+          ruta: archivo.ruta,
+          formato: "prisma",
+          rol: "dominio",
+          bytes: archivo.bytes,
+          caracteres: texto!.length,
+          motivo: "esquema de Prisma: los modelos del dominio (los datos viven en la base)",
+          claves: modelos.map((m) => m.nombre),
+          modelos,
+        });
+      }
+    }
     const contrato = clasificarContrato(archivo, prueba);
     if (contrato) inventario.contratos.push(contrato);
     if (!prueba && esArchivoDeTareas(archivo)) {

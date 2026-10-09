@@ -11,6 +11,7 @@ export const ESTADO_BUSCADO = [
   "estado.*, state.*, status.*, store.*, datos.*, data.*, db.*, tareas.*, tasks.*, bitacora.*, events.* (json, yaml, toml, csv)",
   "cualquier json, yaml, toml, csv o md bajo data/, datos/, estado/, state/, db/, store/, storage/",
   "preferencias, settings, ui, vista, layout, tema (json, yaml, toml), como estado de interfaz",
+  "*.prisma (los modelos de Prisma: la forma del estado que vive en la base)",
 ];
 
 export const TAREAS_BUSCADAS = ["tareas.md", "tasks.md", "TODO.md", "BACKLOG.md", "ROADMAP.md", "*.md bajo tareas/ o tasks/"];
